@@ -24,6 +24,7 @@
  */
 
 #include "asm/macroAssembler.inline.hpp"
+#include "classfile/symbolTable.hpp"
 #include "code/debugInfoRec.hpp"
 #include "code/vtableStubs.hpp"
 #include "code/compiledIC.hpp"
@@ -1342,6 +1343,94 @@ static void move32_64(MacroAssembler *masm,
   }
 }
 
+
+// Same as java_calling_convention() but for multiple return
+// values. There's no way to store them on the stack so if we don't
+// have enough registers, multiple values can't be returned.
+const uint SharedRuntime::java_return_convention_max_int = Argument::n_int_register_parameters_j+1;
+const uint SharedRuntime::java_return_convention_max_float = Argument::n_float_register_parameters_j;
+int SharedRuntime::java_return_convention(const BasicType *sig_bt,
+                                          VMRegPair *regs,
+                                          int total_args_passed) {
+  assert(false, "SharedRuntime::java_return_convention");
+#if 0
+  // Create the mapping between argument positions and
+  // registers.
+  static const Register INT_ArgReg[java_return_convention_max_int] = {
+    rax, j_rarg5, j_rarg4, j_rarg3, j_rarg2, j_rarg1, j_rarg0
+  };
+  static const XMMRegister FP_ArgReg[java_return_convention_max_float] = {
+    j_farg0, j_farg1, j_farg2, j_farg3,
+    j_farg4, j_farg5, j_farg6, j_farg7
+  };
+
+
+  uint int_args = 0;
+  uint fp_args = 0;
+
+  for (int i = 0; i < total_args_passed; i++) {
+    switch (sig_bt[i]) {
+    case T_BOOLEAN:
+    case T_CHAR:
+    case T_BYTE:
+    case T_SHORT:
+    case T_INT:
+      if (int_args < Argument::n_int_register_parameters_j+1) {
+        regs[i].set1(INT_ArgReg[int_args]->as_VMReg());
+        int_args++;
+      } else {
+        return -1;
+      }
+      break;
+    case T_VOID:
+      // halves of T_LONG or T_DOUBLE
+      assert(i != 0 && (sig_bt[i - 1] == T_LONG || sig_bt[i - 1] == T_DOUBLE), "expecting half");
+      regs[i].set_bad();
+      break;
+    case T_LONG:
+      assert(sig_bt[i + 1] == T_VOID, "expecting half");
+      // fall through
+    case T_OBJECT:
+    case T_ARRAY:
+    case T_ADDRESS:
+    case T_METADATA:
+      if (int_args < Argument::n_int_register_parameters_j+1) {
+        regs[i].set2(INT_ArgReg[int_args]->as_VMReg());
+        int_args++;
+      } else {
+        return -1;
+      }
+      break;
+    case T_FLOAT:
+      if (fp_args < Argument::n_float_register_parameters_j) {
+        regs[i].set1(FP_ArgReg[fp_args]->as_VMReg());
+        fp_args++;
+      } else {
+        return -1;
+      }
+      break;
+    case T_DOUBLE:
+      assert(sig_bt[i + 1] == T_VOID, "expecting half");
+      if (fp_args < Argument::n_float_register_parameters_j) {
+        regs[i].set2(FP_ArgReg[fp_args]->as_VMReg());
+        fp_args++;
+      } else {
+        return -1;
+      }
+      break;
+    default:
+      ShouldNotReachHere();
+      break;
+    }
+  }
+
+  return int_args + fp_args;
+#endif
+  return -1;
+}
+
+
+
 //----------------------------------------------------------------------
 // Wrap a JNI call.
 //----------------------------------------------------------------------
@@ -2092,11 +2181,18 @@ nmethod *SharedRuntime::generate_native_wrapper(MacroAssembler *masm,
 }
 
 static address gen_c2i_adapter(MacroAssembler  *masm,
-                               int total_args_passed,
-                               int comp_args_on_stack,
-                               const BasicType *sig_bt,
+                               const GrowableArray<SigEntry>* sig_extended,
                                const VMRegPair *regs,
-                               Label &skip_fixup) {
+                               bool requires_clinit_barrier,
+                               address& c2i_no_clinit_check_entry,
+                               Label& skip_fixup,
+                               address start,
+                               OopMapSet* oop_maps,
+                               int& frame_complete,
+                               int& frame_size_in_words,
+                               bool alloc_inline_receiver) {
+  __ stop("gen_c2i_adapter");
+#if 0
   // Before we get into the guts of the C2I adapter, see if we should be here
   // at all. We've come from compiled code and are attempting to jump to the
   // interpreter, which means the caller made a static call to get here
@@ -2230,6 +2326,9 @@ static address gen_c2i_adapter(MacroAssembler  *masm,
   // end of out-of-line code
 
   return c2i_entrypoint;
+#endif 
+  assert(false, "not possible");
+  return (address)nullptr;
 }
 
 // On entry, the following registers are set
@@ -2240,10 +2339,12 @@ static address gen_c2i_adapter(MacroAssembler  *masm,
 //    Z_SP      r15 - SP prepared by call stub such that caller's outgoing args are near top
 //
 void SharedRuntime::gen_i2c_adapter(MacroAssembler *masm,
-                                    int total_args_passed,
                                     int comp_args_on_stack,
-                                    const BasicType *sig_bt,
+                                    const GrowableArray<SigEntry>* sig,
                                     const VMRegPair *regs) {
+  __ stop("gen_i2c_adapter");
+  int total_args_passed = sig->length();
+
   const Register value = Z_R12;
   const Register ld_ptr= Z_esp;
 
@@ -2265,8 +2366,10 @@ void SharedRuntime::gen_i2c_adapter(MacroAssembler *masm,
   // Now generate the shuffle code. Pick up all register args and move the
   // rest through register value=Z_R12.
   for (int i = 0; i < total_args_passed; i++) {
-    if (sig_bt[i] == T_VOID) {
-      assert(i > 0 && (sig_bt[i-1] == T_LONG || sig_bt[i-1] == T_DOUBLE), "missing half");
+    BasicType bt = sig->at(i)._bt;
+    if (bt == T_VOID) {
+      BasicType prev_bt = (i > 0) ? sig->at(i-1)._bt : T_ILLEGAL;
+      assert(i > 0 && (prev_bt == T_LONG || prev_bt == T_DOUBLE), "missing half");
       continue;
     }
 
@@ -2298,7 +2401,7 @@ void SharedRuntime::gen_i2c_adapter(MacroAssembler *masm,
         } else {
           // In 64bit, longs are given 2 64-bit slots in the interpreter, but the
           // data is passed in only 1 slot.
-          if (sig_bt[i] == T_LONG || sig_bt[i] == T_DOUBLE) {
+          if (bt == T_LONG || bt == T_DOUBLE) {
             ld_offset -= wordSize;
           }
           __ z_mvc(Address(Z_SP, st_off), Address(ld_ptr, ld_offset), sizeof(void*));
@@ -2306,7 +2409,7 @@ void SharedRuntime::gen_i2c_adapter(MacroAssembler *masm,
       } else {
         if (!r_2->is_valid()) {
           // Not sure we need to do this but it shouldn't hurt.
-          if (is_reference_type(sig_bt[i]) || sig_bt[i] == T_ADDRESS) {
+          if (is_reference_type(bt) || bt == T_ADDRESS) {
             __ z_lg(r_1->as_Register(), ld_offset, ld_ptr);
           } else {
             __ z_l(r_1->as_Register(), ld_offset, ld_ptr);
@@ -2314,7 +2417,7 @@ void SharedRuntime::gen_i2c_adapter(MacroAssembler *masm,
         } else {
           // In 64bit, longs are given 2 64-bit slots in the interpreter, but the
           // data is passed in only 1 slot.
-          if (sig_bt[i] == T_LONG || sig_bt[i] == T_DOUBLE) {
+          if (bt == T_LONG || bt == T_DOUBLE) {
             ld_offset -= wordSize;
           }
           __ z_lg(r_1->as_Register(), ld_offset, ld_ptr);
@@ -2343,62 +2446,90 @@ void SharedRuntime::gen_i2c_adapter(MacroAssembler *masm,
   __ z_br(Z_R1_scratch);
 }
 
+static void gen_inline_cache_check(MacroAssembler *masm, Label& skip_fixup) {
+  // Out-of-line call to skip_fixup handler.
+  __ call_ic_miss_handler(skip_fixup, 0x11, 0, Z_R1_scratch);
+
+  __ ic_check(2);
+  __ z_lg(Z_method, Address(Z_inline_cache, CompiledICData::speculated_method_offset()));
+
+  // This def MUST MATCH code in gen_c2i_adapter!
+  const Register code = Z_R11;
+
+  __ load_and_test_long(Z_R0, method_(code));
+  __ z_brne(skip_fixup);  // Cache miss: call runtime to handle this.
+
+  // Fallthru to VEP. Duplicate LTG, but saved taken branch.
+}
+
 void SharedRuntime::generate_i2c2i_adapters(MacroAssembler *masm,
-                                            int total_args_passed,
                                             int comp_args_on_stack,
-                                            const BasicType *sig_bt,
-                                            const VMRegPair *regs,
-                                            address entry_address[AdapterBlob::ENTRY_COUNT]) {
+                                            const GrowableArray<SigEntry>* sig,
+                                            const VMRegPair* regs,
+                                            const GrowableArray<SigEntry>* sig_cc,
+                                            const VMRegPair* regs_cc,
+                                            const GrowableArray<SigEntry>* sig_cc_ro,
+                                            const VMRegPair* regs_cc_ro,
+                                            address entry_address[AdapterBlob::ENTRY_COUNT],
+                                            AdapterBlob*& new_adapter,
+                                            bool allocate_code_blob) {
   __ align(CodeEntryAlignment);
   entry_address[AdapterBlob::I2C] = __ pc();
-  gen_i2c_adapter(masm, total_args_passed, comp_args_on_stack, sig_bt, regs);
+  gen_i2c_adapter(masm, comp_args_on_stack, sig, regs);
 
+  // Unverified Entry Point UEP
+  __ align(CodeEntryAlignment);
+  entry_address[AdapterBlob::C2I_Unverified] = __ pc();
+  entry_address[AdapterBlob::C2I_Unverified_Inline] = __ pc();
   Label skip_fixup;
-  {
-    Label ic_miss;
 
-    // Out-of-line call to ic_miss handler.
-    __ call_ic_miss_handler(ic_miss, 0x11, 0, Z_R1_scratch);
+  gen_inline_cache_check(masm, skip_fixup);
 
-    // Unverified Entry Point UEP
-    __ align(CodeEntryAlignment);
-    entry_address[AdapterBlob::C2I_Unverified] = __ pc();
+  OopMapSet* oop_maps = new OopMapSet();
+  int frame_complete = CodeOffsets::frame_never_safe;
+  int frame_size_in_words = 0;
 
-    __ ic_check(2);
-    __ z_lg(Z_method, Address(Z_inline_cache, CompiledICData::speculated_method_offset()));
-    // This def MUST MATCH code in gen_c2i_adapter!
-    const Register code = Z_R11;
+  // Scalarized c2i adapter with non-scalarized receiver (i.e., don't pack receiver)
+  entry_address[AdapterBlob::C2I_No_Clinit_Check] = nullptr;
+  entry_address[AdapterBlob::C2I_Inline_RO] = __ pc();
 
-    __ load_and_test_long(Z_R0, method_(code));
-    __ z_brne(ic_miss);  // Cache miss: call runtime to handle this.
-
-    // Fallthru to VEP. Duplicate LTG, but saved taken branch.
+  if (regs_cc != regs_cc_ro) {
+    // No class init barrier needed because method is guaranteed to be non-static
+    gen_c2i_adapter(masm, sig_cc_ro, regs_cc_ro, /* requires_clinit_barrier = */ false, entry_address[AdapterBlob::C2I_No_Clinit_Check],
+        skip_fixup, entry_address[AdapterBlob::I2C], oop_maps, frame_complete, frame_size_in_words, /* alloc_inline_receiver = */ false);
+    skip_fixup.reset();
   }
 
-  entry_address[AdapterBlob::C2I] = __ pc();
+  // Scalarized c2i adapter
+  entry_address[AdapterBlob::C2I]        = __ pc();
+  entry_address[AdapterBlob::C2I_Inline] = __ pc();
+  gen_c2i_adapter(masm, sig_cc, regs_cc, /* requires_clinit_barrier = */ true, entry_address[AdapterBlob::C2I_No_Clinit_Check],
+      skip_fixup, entry_address[AdapterBlob::I2C], oop_maps, frame_complete, frame_size_in_words, /* alloc_inline_receiver = */ true);
 
-  // Class initialization barrier for static methods
-  entry_address[AdapterBlob::C2I_No_Clinit_Check] = nullptr;
-  assert(VM_Version::supports_fast_class_init_checks(), "sanity");
-  Label L_skip_barrier;
+  // Non-scalarized c2i adapter
+  if (regs != regs_cc) {
+    entry_address[AdapterBlob::C2I_Unverified_Inline] = __ pc();
+    Label inline_entry_skip_fixup;
+    gen_inline_cache_check(masm, inline_entry_skip_fixup);
 
-  // Bypass the barrier for non-static methods
-  __ testbit_ushort(Address(Z_method, Method::access_flags_offset()), JVM_ACC_STATIC_BIT);
-  __ z_bfalse(L_skip_barrier); // non-static
+    entry_address[AdapterBlob::C2I_Inline] = __ pc();
+    gen_c2i_adapter(masm, sig, regs, /* requires_clinit_barrier = */ true, entry_address[AdapterBlob::C2I_No_Clinit_Check],
+        inline_entry_skip_fixup, entry_address[AdapterBlob::I2C], oop_maps, frame_complete, frame_size_in_words, /* alloc_inline_receiver = */ false);
+  }
 
-  Register klass = Z_R11;
-  __ load_method_holder(klass, Z_method);
-  __ clinit_barrier(klass, Z_thread, &L_skip_barrier /*L_fast_path*/);
+  // The c2i adapters might safepoint and trigger a GC. The caller must make sure that
+  // the GC knows about the location of oop argument locations passed to the c2i adapter.
+  if (allocate_code_blob) {
+    bool caller_must_gc_arguments = (regs != regs_cc);
+    int entry_offset[AdapterHandlerEntry::ENTRIES_COUNT];
+    assert(AdapterHandlerEntry::ENTRIES_COUNT == 7, "sanity");
+    AdapterHandlerLibrary::address_to_offset(entry_address, entry_offset);
+    new_adapter = AdapterBlob::create(masm->code(), entry_offset, frame_complete, frame_size_in_words, oop_maps, caller_must_gc_arguments);
+  }
 
-  __ load_const_optimized(klass, SharedRuntime::get_handle_wrong_method_stub());
-  __ z_br(klass);
-
-  __ bind(L_skip_barrier);
-  entry_address[AdapterBlob::C2I_No_Clinit_Check] = __ pc();
-
-  gen_c2i_adapter(masm, total_args_passed, comp_args_on_stack, sig_bt, regs, skip_fixup);
-  return;
+  __ stop("generate_i2c2i_adapters");
 }
+
 
 // This function returns the adjust size (in number of words) to a c2i adapter
 // activation for use during deoptimization.
@@ -3386,6 +3517,11 @@ void SharedRuntime::montgomery_square(jint *a_ints, jint *n_ints,
   }
 
   reverse_words(m, (unsigned long *)m_ints, longwords);
+}
+
+BufferedInlineTypeBlob* SharedRuntime::generate_buffered_inline_type_adapter(const InlineKlass* vk) {
+  assert(false, "SharedRuntime::generate_buffered_inline_type_adapter");
+  return nullptr;
 }
 
 extern "C"

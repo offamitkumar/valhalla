@@ -33,7 +33,9 @@
 #include "interpreter/interpreter.hpp"
 #include "oops/arrayOop.hpp"
 #include "oops/markWord.hpp"
+#include "runtime/arguments.hpp"
 #include "runtime/basicLock.hpp"
+#include "runtime/frame.inline.hpp"
 #include "runtime/os.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/stubRoutines.hpp"
@@ -43,14 +45,25 @@ void C1_MacroAssembler::explicit_null_check(Register base) {
   ShouldNotCallThis(); // unused
 }
 
-void C1_MacroAssembler::build_frame(int frame_size_in_bytes, int bang_size_in_bytes) {
+void C1_MacroAssembler::build_frame_helper(int frame_size_in_bytes, int sp_offset_for_orig_pc, int sp_inc, bool reset_orig_pc, bool needs_stack_repair) {
+  stop("not yet implemented: build_frame_helper");
+}
+
+void C1_MacroAssembler::build_frame(int frame_size_in_bytes, int bang_size_in_bytes, int sp_offset_for_orig_pc, bool needs_stack_repair, bool has_scalarized_args, Label* verified_inline_entry_label) {
   assert(bang_size_in_bytes >= frame_size_in_bytes, "stack bang size incorrect");
   generate_stack_overflow_check(bang_size_in_bytes);
+  // TODO: might be after push frame
+  build_frame_helper(frame_size_in_bytes, sp_offset_for_orig_pc, 0, has_scalarized_args, needs_stack_repair);
   save_return_pc();
   push_frame(frame_size_in_bytes);
 
   BarrierSetAssembler* bs = BarrierSet::barrier_set()->barrier_set_assembler();
   bs->nmethod_entry_barrier(this);
+
+  if (verified_inline_entry_label != nullptr) {
+    // Jump here from the scalarized entry points that already created the frame.
+    bind(*verified_inline_entry_label);
+  }
 }
 
 void C1_MacroAssembler::verified_entry(bool breakAtEntry) {
@@ -96,6 +109,7 @@ void C1_MacroAssembler::try_allocate(
 }
 
 void C1_MacroAssembler::initialize_header(Register obj, Register klass, Register len, Register Rzero, Register t1) {
+  assert(false, "initialize_header");
   assert_different_registers(obj, klass, len, t1, Rzero);
   if (UseCompactObjectHeaders) {
     z_lg(t1, Address(klass, in_bytes(Klass::prototype_header_offset())));
@@ -281,6 +295,11 @@ void C1_MacroAssembler::invalidate_registers(Register preserve1,
       }
     }
   }
+}
+
+int C1_MacroAssembler::scalarized_entry(const CompiledEntrySignature* ces, int frame_size_in_bytes, int bang_size_in_bytes, int sp_offset_for_orig_pc, Label& verified_inline_entry_label, bool is_inline_ro_entry) {
+  assert(false, "scalarized_entry");
+  return -1;
 }
 
 #endif // !PRODUCT

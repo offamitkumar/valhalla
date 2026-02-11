@@ -31,6 +31,7 @@
 #include "c1/c1_Runtime1.hpp"
 #include "c1/c1_ValueStack.hpp"
 #include "ci/ciArray.hpp"
+#include "ci/ciInlineKlass.hpp"
 #include "ci/ciObjArrayKlass.hpp"
 #include "ci/ciTypeArrayKlass.hpp"
 #include "runtime/sharedRuntime.hpp"
@@ -265,6 +266,7 @@ void LIRGenerator::array_store_check(LIR_Opr value, LIR_Opr array, CodeEmitInfo*
 }
 
 void LIRGenerator::do_MonitorEnter(MonitorEnter* x) {
+  assert(false, "do_MonitorEnter");
   assert(x->is_pinned(),"");
   LIRItem obj(x->obj(), this);
   obj.load_item();
@@ -278,11 +280,17 @@ void LIRGenerator::do_MonitorEnter(MonitorEnter* x) {
   if (x->needs_null_check()) {
     info_for_exception = state_for (x);
   }
+
+  assert(false, "not yet implemented correctly");
+  CodeStub* throw_ie_stub = x->maybe_inlinetype() ? 
+      new SimpleExceptionStub(StubId::c1_throw_identity_exception_id,
+          obj.result(), state_for(x))
+      : nullptr;
   // This CodeEmitInfo must not have the xhandlers because here the
   // object is already locked (xhandlers expect object to be unlocked).
   CodeEmitInfo* info = state_for (x, x->state(), true);
   monitor_enter(obj.result(), lock, syncTempOpr(), LIR_OprFact::illegalOpr,
-                x->monitor_no(), info_for_exception, info);
+                x->monitor_no(), info_for_exception, info, throw_ie_stub);
 }
 
 void LIRGenerator::do_MonitorExit(MonitorExit* x) {
@@ -771,13 +779,14 @@ void LIRGenerator::do_NewInstance(NewInstance* x) {
   // Z_R2 as result register.
   const LIR_Opr reg = result_register_for (x->type());
 
-  CodeEmitInfo* info = state_for (x, x->state());
+  //REMOVE CodeEmitInfo* info = state_for (x, x->state());
+  CodeEmitInfo* info = state_for(x, x->needs_state_before() ? x->state_before() : x->state());
   LIR_Opr tmp1 = FrameMap::Z_R12_oop_opr;
   LIR_Opr tmp2 = FrameMap::Z_R13_oop_opr;
   LIR_Opr tmp3 = reg;
   LIR_Opr tmp4 = LIR_OprFact::illegalOpr;
   LIR_Opr klass_reg = FrameMap::Z_R11_metadata_opr;
-  new_instance(reg, x->klass(), x->is_unresolved(), tmp1, tmp2, tmp3, tmp4, klass_reg, info);
+  new_instance(reg, x->klass(), x->is_unresolved(), !x->is_unresolved() && x->klass()->is_inlinetype(), tmp1, tmp2, tmp3, tmp4, klass_reg, info);
   LIR_Opr result = rlock_result(x);
   __ move(reg, result);
 }
@@ -834,13 +843,17 @@ void LIRGenerator::do_NewObjectArray(NewObjectArray* x) {
   LIR_Opr klass_reg = FrameMap::Z_R11_metadata_opr;
   LIR_Opr len = length.result();
 
-  CodeStub* slow_path = new NewObjectArrayStub(klass_reg, len, reg, info);
   ciKlass* obj = ciObjArrayKlass::make(x->klass());
+  // TODO 8265122 Implement a fast path for this
+  bool is_flat = obj->is_loaded() && obj->is_flat_array_klass();
+  bool is_null_free = obj->is_loaded() && obj->as_array_klass()->is_elem_null_free();
+
+  CodeStub* slow_path = new NewObjectArrayStub(klass_reg, len, reg, info, is_null_free);
   if (obj == ciEnv::unloaded_ciobjarrayklass()) {
     BAILOUT("encountered unloaded_ciobjarrayklass due to out of memory error");
   }
   klass2reg_with_patching(klass_reg, obj, patching_info);
-  __ allocate_array(reg, len, tmp1, tmp2, tmp3, tmp4, T_OBJECT, klass_reg, slow_path);
+  __ allocate_array(reg, len, tmp1, tmp2, tmp3, tmp4, T_OBJECT, klass_reg, slow_path, true, is_null_free || is_flat);
 
   LIR_Opr result = rlock_result(x);
   __ move(reg, result);
@@ -937,7 +950,7 @@ void LIRGenerator::do_CheckCast(CheckCast* x) {
   __ checkcast(reg, obj.result(), x->klass(),
                tmp1, tmp2, tmp3,
                x->direct_compare(), info_for_exception, patching_info, stub,
-               x->profiled_method(), x->profiled_bci());
+               x->profiled_method(), x->profiled_bci(), x->is_null_free());
 }
 
 
@@ -992,7 +1005,7 @@ void LIRGenerator::do_If (If* x) {
   if (tag == longTag && yin->is_constant() && yin->get_jlong_constant() == 0 && (cond == If::eql || cond == If::neq)) {
     // inline long zero
     yin->dont_load_item();
-  } else if (tag == longTag || tag == floatTag || tag == doubleTag) {
+  } else if (tag == longTag || tag == floatTag || tag == doubleTag || x->substitutability_check()) {
     // Longs cannot handle constants at right side.
     yin->load_item();
   } else {
@@ -1013,7 +1026,12 @@ void LIRGenerator::do_If (If* x) {
     __ safepoint(safepoint_poll_register(), state_for (x, x->state_before()));
   }
 
-  __ cmp(lir_cond(cond), left, right);
+  if (x->substitutability_check()) {
+    substitutability_check(x, *xin, *yin);
+  } else { 
+    __ cmp(lir_cond(cond), left, right);
+  }
+
   // Generate branch profiling. Profiling code doesn't kill flags.
   profile_branch(x, cond);
   move_to_phi(x->state());
@@ -1211,3 +1229,21 @@ void LIRGenerator::do_FmaIntrinsic(Intrinsic* x) {
 void LIRGenerator::do_vectorizedMismatch(Intrinsic* x) {
   fatal("vectorizedMismatch intrinsic is not implemented on this platform");
 }
+
+void LIRGenerator::init_temps_for_substitutability_check(LIR_Opr& tmp1, LIR_Opr& tmp2) {
+  assert(false, "init_temps_for_substitutability_check");
+#if 0
+  // We just need one 32-bit temp register for x86/x64, to check whether both
+  // oops have markWord::always_locked_pattern. See LIR_Assembler::emit_opSubstitutabilityCheck().
+  // @temp = %r10d
+  // mov $0x405, %r10d
+  // and (%left), %r10d   /* if need to check left */
+  // and (%right), %r10d  /* if need to check right */
+  // cmp $0x405, $r10d
+  // jne L_oops_not_equal
+  tmp1 = new_register(T_INT);
+  tmp2 = LIR_OprFact::illegalOpr;
+#endif
+}
+
+

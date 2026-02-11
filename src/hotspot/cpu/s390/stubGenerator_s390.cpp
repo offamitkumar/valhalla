@@ -442,7 +442,7 @@ class StubGenerator: public StubCodeGenerator {
         __ z_br(Z_R14); // Return to caller.
         __ align(handlerLen);
       // T_ADDRESS:
-        guarantee(T_ADDRESS == T_VOID+1, "check BasicType definition in globalDefinitions.hpp");
+        guarantee(T_ADDRESS == T_VOID+2, "check BasicType definition in globalDefinitions.hpp"); // T_ADDRESS = 16, so +2 is required
         __ z_stg(Z_RET, 0, r_arg_result_addr);
         __ z_br(Z_R14); // Return to caller.
         __ align(handlerLen);

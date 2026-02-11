@@ -1681,7 +1681,8 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
 //
 // Generic interpreted method entry to template interpreter.
 //
-address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized, bool object_init) {
+  assert(false, "generate_normal_entry");
   address entry_point = __ pc();
 
   bool inc_counter = UseCompiler || CountCompiledCalls;

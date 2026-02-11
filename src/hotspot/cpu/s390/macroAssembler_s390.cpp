@@ -28,6 +28,7 @@
 #include "asm/macroAssembler.inline.hpp"
 #include "code/compiledIC.hpp"
 #include "compiler/disassembler.hpp"
+#include "ci/ciInlineKlass.hpp"
 #include "gc/shared/barrierSet.hpp"
 #include "gc/shared/barrierSetAssembler.hpp"
 #include "gc/shared/collectedHeap.inline.hpp"
@@ -6773,3 +6774,506 @@ void MacroAssembler::load_on_condition_imm_64(Register dst, int64_t i2, branch_c
     bind(done);
   }
 }
+
+
+int MacroAssembler::store_inline_type_fields_to_buf(ciInlineKlass* vk, bool from_interpreter) {
+  stop(" MacroAssembler::store_inline_type_fields_to_buf");
+#if 0
+  assert(InlineTypeReturnedAsFields, "Inline types should never be returned as fields");
+  // An inline type might be returned. If fields are in registers we
+  // need to allocate an inline type instance and initialize it with
+  // the value of the fields.
+  Label skip;
+  // We only need a new buffered inline type if a new one is not returned
+  testptr(rax, 1);
+  jcc(Assembler::zero, skip);
+  int call_offset = -1;
+
+#ifdef _LP64
+  // The following code is similar to allocate_instance but has some slight differences,
+  // e.g. object size is always not zero, sometimes it's constant; storing klass ptr after
+  // allocating is not necessary if vk != nullptr, etc. allocate_instance is not aware of these.
+  Label slow_case;
+  // 1. Try to allocate a new buffered inline instance either from TLAB or eden space
+  mov(rscratch1, rax); // save rax for slow_case since *_allocate may corrupt it when allocation failed
+  if (vk != nullptr) {
+    // Called from C1, where the return type is statically known.
+    movptr(rbx, (intptr_t)vk->get_InlineKlass());
+    jint lh = vk->layout_helper();
+    assert(lh != Klass::_lh_neutral_value, "inline class in return type must have been resolved");
+    if (UseTLAB && !Klass::layout_helper_needs_slow_path(lh)) {
+      tlab_allocate(rax, noreg, lh, r13, r14, slow_case);
+    } else {
+      jmp(slow_case);
+    }
+  } else {
+    // Call from interpreter. RAX contains ((the InlineKlass* of the return type) | 0x01)
+    mov(rbx, rax);
+    andptr(rbx, -2);
+    if (UseTLAB) {
+      movl(r14, Address(rbx, Klass::layout_helper_offset()));
+      testl(r14, Klass::_lh_instance_slow_path_bit);
+      jcc(Assembler::notZero, slow_case);
+      tlab_allocate(rax, r14, 0, r13, r14, slow_case);
+    } else {
+      jmp(slow_case);
+    }
+  }
+  if (UseTLAB) {
+    // 2. Initialize buffered inline instance header
+    Register buffer_obj = rax;
+    Register klass = rbx;
+    if (UseCompactObjectHeaders) {
+      Register mark_word = r13;
+      movptr(mark_word, Address(klass, Klass::prototype_header_offset()));
+      movptr(Address(buffer_obj, oopDesc::mark_offset_in_bytes()), mark_word);
+    } else {
+      movptr(Address(buffer_obj, oopDesc::mark_offset_in_bytes()), (intptr_t)markWord::inline_type_prototype().value());
+      xorl(r13, r13);
+      store_klass_gap(buffer_obj, r13);
+      if (vk == nullptr) {
+        // store_klass corrupts rbx(klass), so save it in r13 for later use (interpreter case only).
+        mov(r13, klass);
+      }
+      store_klass(buffer_obj, klass, rscratch1);
+      klass = r13;
+    }
+    // 3. Initialize its fields with an inline class specific handler
+    if (vk != nullptr) {
+      call(RuntimeAddress(vk->pack_handler())); // no need for call info as this will not safepoint.
+    } else {
+      movptr(rbx, Address(klass, InlineKlass::adr_members_offset()));
+      movptr(rbx, Address(rbx, InlineKlass::pack_handler_offset()));
+      call(rbx);
+    }
+    jmp(skip);
+  }
+  bind(slow_case);
+  // We failed to allocate a new inline type, fall back to a runtime
+  // call. Some oop field may be live in some registers but we can't
+  // tell. That runtime call will take care of preserving them
+  // across a GC if there's one.
+  mov(rax, rscratch1);
+#endif
+
+  if (from_interpreter) {
+    super_call_VM_leaf(StubRoutines::store_inline_type_fields_to_buf());
+  } else {
+    call(RuntimeAddress(StubRoutines::store_inline_type_fields_to_buf()));
+    call_offset = offset();
+  }
+
+  bind(skip);
+  return call_offset;
+#endif 
+  return -1;
+}
+
+// Move a value between registers/stack slots and update the reg_state
+bool MacroAssembler::move_helper(VMReg from, VMReg to, BasicType bt, RegState reg_state[]) {
+  assert(false, "MacroAssembler::move_helper");
+#if 0
+  assert(from->is_valid() && to->is_valid(), "source and destination must be valid");
+  if (reg_state[to->value()] == reg_written) {
+    return true; // Already written
+  }
+  if (from != to && bt != T_VOID) {
+    if (reg_state[to->value()] == reg_readonly) {
+      return false; // Not yet writable
+    }
+    if (from->is_reg()) {
+      if (to->is_reg()) {
+        if (from->is_XMMRegister()) {
+          if (bt == T_DOUBLE) {
+            movdbl(to->as_XMMRegister(), from->as_XMMRegister());
+          } else {
+            assert(bt == T_FLOAT, "must be float");
+            movflt(to->as_XMMRegister(), from->as_XMMRegister());
+          }
+        } else {
+          movq(to->as_Register(), from->as_Register());
+        }
+      } else {
+        int st_off = to->reg2stack() * VMRegImpl::stack_slot_size + wordSize;
+        Address to_addr = Address(rsp, st_off);
+        if (from->is_XMMRegister()) {
+          if (bt == T_DOUBLE) {
+            movdbl(to_addr, from->as_XMMRegister());
+          } else {
+            assert(bt == T_FLOAT, "must be float");
+            movflt(to_addr, from->as_XMMRegister());
+          }
+        } else {
+          movq(to_addr, from->as_Register());
+        }
+      }
+    } else {
+      Address from_addr = Address(rsp, from->reg2stack() * VMRegImpl::stack_slot_size + wordSize);
+      if (to->is_reg()) {
+        if (to->is_XMMRegister()) {
+          if (bt == T_DOUBLE) {
+            movdbl(to->as_XMMRegister(), from_addr);
+          } else {
+            assert(bt == T_FLOAT, "must be float");
+            movflt(to->as_XMMRegister(), from_addr);
+          }
+        } else {
+          movq(to->as_Register(), from_addr);
+        }
+      } else {
+        int st_off = to->reg2stack() * VMRegImpl::stack_slot_size + wordSize;
+        movq(r13, from_addr);
+        movq(Address(rsp, st_off), r13);
+      }
+    }
+  }
+  // Update register states
+  reg_state[from->value()] = reg_writable;
+  reg_state[to->value()] = reg_written;
+  return true;
+#endif 
+  return false;
+}
+
+// Calculate the extra stack space required for packing or unpacking inline
+// args and adjust the stack pointer.
+//
+// This extra stack space take into account the copy #2 of the return address,
+// but NOT the saved RBP or the normal size of the frame (see MacroAssembler::remove_frame
+// for notations).
+int MacroAssembler::extend_stack_for_inline_args(int args_on_stack) {
+  assert(false, "MacroAssembler::extend_stack_for_inline_args");
+#if 0
+  // Two additional slots to account for return address
+  int sp_inc = (args_on_stack + 2) * VMRegImpl::stack_slot_size;
+  sp_inc = align_up(sp_inc, StackAlignmentInBytes);
+  // Save the return address, adjust the stack (make sure it is properly
+  // 16-byte aligned) and copy the return address to the new top of the stack.
+  // The stack will be repaired on return (see MacroAssembler::remove_frame).
+  assert(sp_inc > 0, "sanity");
+  pop(r13);
+  subptr(rsp, sp_inc);
+#ifdef ASSERT
+  movl(Address(rsp, -VMRegImpl::stack_slot_size), badRegWordVal);
+  movl(Address(rsp, -2 * VMRegImpl::stack_slot_size), badRegWordVal);
+  subptr(rsp, 2 * VMRegImpl::stack_slot_size);
+#else
+  push(r13);
+#endif
+  return sp_inc;
+#endif
+  return -1;
+}
+
+// Read all fields from an inline type buffer and store the field values in registers/stack slots.
+bool MacroAssembler::unpack_inline_helper(const GrowableArray<SigEntry>* sig, int& sig_index,
+                                          VMReg from, int& from_index, VMRegPair* to, int to_count, int& to_index,
+                                          RegState reg_state[]) {
+  assert(false, "MacroAssembler::unpack_inline_helper");
+#if 0
+  assert(sig->at(sig_index)._bt == T_VOID, "should be at end delimiter");
+  assert(from->is_valid(), "source must be valid");
+  bool progress = false;
+#ifdef ASSERT
+  const int start_offset = offset();
+#endif
+
+  Label L_null, L_notNull;
+  // Don't use r14 as tmp because it's used for spilling (see MacroAssembler::spill_reg_for)
+  Register tmp1 = r10;
+  Register tmp2 = r13;
+  Register fromReg = noreg;
+  ScalarizedInlineArgsStream stream(sig, sig_index, to, to_count, to_index, true);
+  bool done = true;
+  bool mark_done = true;
+  VMReg toReg;
+  BasicType bt;
+  // Check if argument requires a null check
+  bool null_check = false;
+  VMReg nullCheckReg;
+  while (stream.next(nullCheckReg, bt)) {
+    if (sig->at(stream.sig_index())._offset == -1) {
+      null_check = true;
+      break;
+    }
+  }
+  stream.reset(sig_index, to_index);
+  while (stream.next(toReg, bt)) {
+    assert(toReg->is_valid(), "destination must be valid");
+    int idx = (int)toReg->value();
+    if (reg_state[idx] == reg_readonly) {
+      if (idx != from->value()) {
+        mark_done = false;
+      }
+      done = false;
+      continue;
+    } else if (reg_state[idx] == reg_written) {
+      continue;
+    }
+    assert(reg_state[idx] == reg_writable, "must be writable");
+    reg_state[idx] = reg_written;
+    progress = true;
+
+    if (fromReg == noreg) {
+      if (from->is_reg()) {
+        fromReg = from->as_Register();
+      } else {
+        int st_off = from->reg2stack() * VMRegImpl::stack_slot_size + wordSize;
+        movq(tmp1, Address(rsp, st_off));
+        fromReg = tmp1;
+      }
+      if (null_check) {
+        // Nullable inline type argument, emit null check
+        testptr(fromReg, fromReg);
+        jcc(Assembler::zero, L_null);
+      }
+    }
+    int off = sig->at(stream.sig_index())._offset;
+    if (off == -1) {
+      assert(null_check, "Missing null check at");
+      if (toReg->is_stack()) {
+        int st_off = toReg->reg2stack() * VMRegImpl::stack_slot_size + wordSize;
+        movq(Address(rsp, st_off), 1);
+      } else {
+        movq(toReg->as_Register(), 1);
+      }
+      continue;
+    }
+    assert(off > 0, "offset in object should be positive");
+    Address fromAddr = Address(fromReg, off);
+    if (!toReg->is_XMMRegister()) {
+      Register dst = toReg->is_stack() ? tmp2 : toReg->as_Register();
+      if (is_reference_type(bt)) {
+        load_heap_oop(dst, fromAddr);
+      } else {
+        bool is_signed = (bt != T_CHAR) && (bt != T_BOOLEAN);
+        load_sized_value(dst, fromAddr, type2aelembytes(bt), is_signed);
+      }
+      if (toReg->is_stack()) {
+        int st_off = toReg->reg2stack() * VMRegImpl::stack_slot_size + wordSize;
+        movq(Address(rsp, st_off), dst);
+      }
+    } else if (bt == T_DOUBLE) {
+      movdbl(toReg->as_XMMRegister(), fromAddr);
+    } else {
+      assert(bt == T_FLOAT, "must be float");
+      movflt(toReg->as_XMMRegister(), fromAddr);
+    }
+  }
+  if (progress && null_check) {
+    if (done) {
+      jmp(L_notNull);
+      bind(L_null);
+      // Set null marker to zero to signal that the argument is null.
+      // Also set all fields to zero since the runtime requires a canonical
+      // representation of a flat null.
+      stream.reset(sig_index, to_index);
+      while (stream.next(toReg, bt)) {
+        if (toReg->is_stack()) {
+          int st_off = toReg->reg2stack() * VMRegImpl::stack_slot_size + wordSize;
+          movq(Address(rsp, st_off), 0);
+        } else if (toReg->is_XMMRegister()) {
+          xorps(toReg->as_XMMRegister(), toReg->as_XMMRegister());
+        } else {
+          xorl(toReg->as_Register(), toReg->as_Register());
+        }
+      }
+      bind(L_notNull);
+    } else {
+      bind(L_null);
+    }
+  }
+
+  sig_index = stream.sig_index();
+  to_index = stream.regs_index();
+
+  if (mark_done && reg_state[from->value()] != reg_written) {
+    // This is okay because no one else will write to that slot
+    reg_state[from->value()] = reg_writable;
+  }
+  from_index--;
+  assert(progress || (start_offset == offset()), "should not emit code");
+  return done;
+#endif
+  return 0;
+}
+
+bool MacroAssembler::pack_inline_helper(const GrowableArray<SigEntry>* sig, int& sig_index, int vtarg_index,
+                                        VMRegPair* from, int from_count, int& from_index, VMReg to,
+                                        RegState reg_state[], Register val_array) {
+  assert(false, "MacroAssembler::pack_inline_helper");
+#if 0
+  assert(sig->at(sig_index)._bt == T_METADATA, "should be at delimiter");
+  assert(to->is_valid(), "destination must be valid");
+
+  if (reg_state[to->value()] == reg_written) {
+    skip_unpacked_fields(sig, sig_index, from, from_count, from_index);
+    return true; // Already written
+  }
+
+  // TODO 8284443 Isn't it an issue if below code uses r14 as tmp when it contains a spilled value?
+  // Be careful with r14 because it's used for spilling (see MacroAssembler::spill_reg_for).
+  Register val_obj_tmp = r11;
+  Register from_reg_tmp = r14;
+  Register tmp1 = r10;
+  Register tmp2 = r13;
+  Register tmp3 = rbx;
+  Register val_obj = to->is_stack() ? val_obj_tmp : to->as_Register();
+
+  assert_different_registers(val_obj_tmp, from_reg_tmp, tmp1, tmp2, tmp3, val_array);
+
+  if (reg_state[to->value()] == reg_readonly) {
+    if (!is_reg_in_unpacked_fields(sig, sig_index, to, from, from_count, from_index)) {
+      skip_unpacked_fields(sig, sig_index, from, from_count, from_index);
+      return false; // Not yet writable
+    }
+    val_obj = val_obj_tmp;
+  }
+
+  int index = arrayOopDesc::base_offset_in_bytes(T_OBJECT) + vtarg_index * type2aelembytes(T_OBJECT);
+  load_heap_oop(val_obj, Address(val_array, index));
+
+  ScalarizedInlineArgsStream stream(sig, sig_index, from, from_count, from_index);
+  VMReg fromReg;
+  BasicType bt;
+  Label L_null;
+  while (stream.next(fromReg, bt)) {
+    assert(fromReg->is_valid(), "source must be valid");
+    reg_state[fromReg->value()] = reg_writable;
+
+    int off = sig->at(stream.sig_index())._offset;
+    if (off == -1) {
+      // Nullable inline type argument, emit null check
+      Label L_notNull;
+      if (fromReg->is_stack()) {
+        int ld_off = fromReg->reg2stack() * VMRegImpl::stack_slot_size + wordSize;
+        testb(Address(rsp, ld_off), 1);
+      } else {
+        testb(fromReg->as_Register(), 1);
+      }
+      jcc(Assembler::notZero, L_notNull);
+      movptr(val_obj, 0);
+      jmp(L_null);
+      bind(L_notNull);
+      continue;
+    }
+
+    assert(off > 0, "offset in object should be positive");
+    size_t size_in_bytes = is_java_primitive(bt) ? type2aelembytes(bt) : wordSize;
+
+    // Pack the scalarized field into the value object.
+    Address dst(val_obj, off);
+    if (!fromReg->is_XMMRegister()) {
+      Register src;
+      if (fromReg->is_stack()) {
+        src = from_reg_tmp;
+        int ld_off = fromReg->reg2stack() * VMRegImpl::stack_slot_size + wordSize;
+        load_sized_value(src, Address(rsp, ld_off), size_in_bytes, /* is_signed */ false);
+      } else {
+        src = fromReg->as_Register();
+      }
+      assert_different_registers(dst.base(), src, tmp1, tmp2, tmp3, val_array);
+      if (is_reference_type(bt)) {
+        // store_heap_oop transitively calls oop_store_at which corrupts to.base(). We need to keep val_obj valid.
+        mov(tmp3, val_obj);
+        Address dst_with_tmp3(tmp3, off);
+        store_heap_oop(dst_with_tmp3, src, tmp1, tmp2, tmp3, IN_HEAP | ACCESS_WRITE | IS_DEST_UNINITIALIZED);
+      } else {
+        store_sized_value(dst, src, size_in_bytes);
+      }
+    } else if (bt == T_DOUBLE) {
+      movdbl(dst, fromReg->as_XMMRegister());
+    } else {
+      assert(bt == T_FLOAT, "must be float");
+      movflt(dst, fromReg->as_XMMRegister());
+    }
+  }
+  bind(L_null);
+  sig_index = stream.sig_index();
+  from_index = stream.regs_index();
+
+  assert(reg_state[to->value()] == reg_writable, "must have already been read");
+  bool success = move_helper(val_obj->as_VMReg(), to, T_OBJECT, reg_state);
+  assert(success, "to register must be writeable");
+  return true;
+#endif 
+  return false;
+}
+
+VMReg MacroAssembler::spill_reg_for(VMReg reg) {
+  assert(false, "MacroAssembler::spill_reg_for");
+  // return reg->is_XMMRegister() ? xmm8->as_VMReg() : r14->as_VMReg();
+  return Z_R14->as_VMReg();
+}
+
+void MacroAssembler::remove_frame(int initial_framesize, bool needs_stack_repair) {
+  assert(false, "MacroAssembler::remove_frame");
+#if 0
+  assert((initial_framesize & (StackAlignmentInBytes-1)) == 0, "frame size not aligned");
+  if (needs_stack_repair) {
+    // The method has a scalarized entry point (where fields of value object arguments
+    // are passed through registers and stack), and a non-scalarized entry point (where
+    // value object arguments are given as oops). The non-scalarized entry point will
+    // first load each field of value object arguments and store them in registers and on
+    // the stack in a way compatible with the scalarized entry point. To do so, some extra
+    // stack space might be reserved (if argument registers are not enough). On leaving the
+    // method, this space must be freed.
+    //
+    // In case we used the non-scalarized entry point the stack looks like this:
+    //
+    // | Arguments from caller     |
+    // |---------------------------|  <-- caller's SP
+    // | Return address #1         |
+    // |---------------------------|
+    // | Extension space for       |
+    // |   inline arg (un)packing  |
+    // |---------------------------|
+    // | Return address #2         |
+    // | Saved RBP                 |
+    // |---------------------------|  <-- start of this method's frame
+    // | sp_inc                    |
+    // | method locals             |
+    // |---------------------------|  <-- SP
+    //
+    // There is two copies of the return address on the stack. They will be identical at
+    // first, but that can change.
+    // If the caller has been deoptimized, the copy #1 will be patched to point at the
+    // deopt blob, and the copy #2 will still point into the old method. In short
+    // the copy #2 is not reliable and should not be used. It is mostly needed to
+    // add space between the extension space and the locals, as there would be between
+    // the real arguments and the locals if we don't need to do unpacking (from the
+    // scalarized entry point).
+    //
+    // When leaving, one must use the copy #1 of the return address, while keeping in mind
+    // that from the scalarized entry point, there will be only one copy. Indeed, in the
+    // case we used the scalarized calling convention, the stack looks like this:
+    //
+    // | Arguments from caller     |
+    // |---------------------------|  <-- caller's SP
+    // | Return address            |
+    // | Saved RBP                 |
+    // |---------------------------|  <-- start of this method's frame
+    // | sp_inc                    |
+    // | method locals             |
+    // |---------------------------|  <-- SP
+    //
+    // The sp_inc stack slot holds the total size of the frame, including the extension
+    // space the possible copy #2 of the return address and the saved RBP (but never the
+    // copy #1 of the return address). That is how to find the copy #1 of the return address.
+    // This size is expressed in bytes. Be careful when using it from C++ in pointer arithmetic;
+    // you might need to divide it by wordSize.
+    //
+    // One can find sp_inc since the start the method's frame is SP + initial_framesize.
+
+    movq(rbp, Address(rsp, initial_framesize));
+    // The stack increment resides just below the saved rbp
+    addq(rsp, Address(rsp, initial_framesize - wordSize));
+  } else {
+    if (initial_framesize > 0) {
+      addq(rsp, initial_framesize);
+    }
+    pop(rbp);
+  }
+#endif 
+}
+

@@ -31,6 +31,7 @@
 #include "c1/c1_Runtime1.hpp"
 #include "classfile/javaClasses.hpp"
 #include "nativeInst_s390.hpp"
+#include "oops/objArrayKlass.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "utilities/align.hpp"
 #include "utilities/macros.hpp"
@@ -194,18 +195,24 @@ void NewTypeArrayStub::emit_code(LIR_Assembler* ce) {
   __ z_brul(_continuation);
 }
 
-NewObjectArrayStub::NewObjectArrayStub(LIR_Opr klass_reg, LIR_Opr length, LIR_Opr result, CodeEmitInfo* info) {
+NewObjectArrayStub::NewObjectArrayStub(LIR_Opr klass_reg, LIR_Opr length, LIR_Opr result, CodeEmitInfo* info, bool is_null_free) {
   _klass_reg = klass_reg;
   _length = length;
   _result = result;
   _info = new CodeEmitInfo(info);
+  _is_null_free = is_null_free;
 }
 
 void NewObjectArrayStub::emit_code(LIR_Assembler* ce) {
   __ bind(_entry);
   assert(_klass_reg->as_register() == Z_R11, "call target expects klass in Z_R11");
   __ lgr_if_needed(Z_R13, _length->as_register());
-  address a = Runtime1::entry_for (StubId::c1_new_object_array_id);
+  address a;
+  if (_is_null_free) {
+    a = Runtime1::entry_for (StubId::c1_new_null_free_array_id);
+  } else {
+    a = Runtime1::entry_for (StubId::c1_new_object_array_id);
+  }
   ce->emit_call_c(a);
   CHECK_BAILOUT();
   ce->add_call_info_here(_info);
@@ -216,6 +223,9 @@ void NewObjectArrayStub::emit_code(LIR_Assembler* ce) {
 
 void MonitorEnterStub::emit_code(LIR_Assembler* ce) {
   __ bind(_entry);
+  if (_throw_ie_stub != nullptr) {
+    __ stop("not yet implemented: MonitorEnterStub::emit_code");
+  }
   StubId enter_id;
   if (ce->compilation()->has_fpu_code()) {
     enter_id = StubId::c1_monitorenter_id;
@@ -443,5 +453,98 @@ void ArrayCopyStub::emit_code(LIR_Assembler* ce) {
 
   __ branch_optimized(Assembler::bcondAlways, _continuation);
 }
+
+
+// Implementation of LoadFlattenedArrayStub
+
+LoadFlattenedArrayStub::LoadFlattenedArrayStub(LIR_Opr array, LIR_Opr index, LIR_Opr result, CodeEmitInfo* info) {
+  assert(false, "LoadFlattenedArrayStub::LoadFlattenedArrayStub");
+#if 0
+  _array = array;
+  _index = index;
+  _result = result;
+  // Tell the register allocator that the runtime call will scratch rax.
+  _scratch_reg = FrameMap::rax_oop_opr;
+  _info = new CodeEmitInfo(info);
+#endif
+}
+
+void LoadFlattenedArrayStub::emit_code(LIR_Assembler* ce) {
+  assert(false, "emit_codeLoadFlattenedArrayStub");
+#if 0
+  assert(__ rsp_offset() == 0, "frame size should be fixed");
+  __ bind(_entry);
+  ce->store_parameter(_array->as_register(), 1);
+  ce->store_parameter(_index->as_register(), 0);
+  __ call(RuntimeAddress(Runtime1::entry_for(StubId::c1_load_flat_array_id)));
+  ce->add_call_info_here(_info);
+  ce->verify_oop_map(_info);
+  if (_result->as_register() != rax) {
+    __ movptr(_result->as_register(), rax);
+  }
+  __ jmp(_continuation);
+#endif
+}
+
+
+// Implementation of StoreFlattenedArrayStub
+
+StoreFlattenedArrayStub::StoreFlattenedArrayStub(LIR_Opr array, LIR_Opr index, LIR_Opr value, CodeEmitInfo* info) {
+  assert(false, "StoreFlattenedArrayStub::StoreFlattenedArrayStub");
+#if 0
+  _array = array;
+  _index = index;
+  _value = value;
+  // Tell the register allocator that the runtime call will scratch rax.
+  _scratch_reg = FrameMap::rax_oop_opr;
+  _info = new CodeEmitInfo(info);
+#endif
+}
+
+
+void StoreFlattenedArrayStub::emit_code(LIR_Assembler* ce) {
+  assert(false, "StoreFlattenedArrayStub::emit_code");
+#if 0
+  assert(__ rsp_offset() == 0, "frame size should be fixed");
+  __ bind(_entry);
+  ce->store_parameter(_array->as_register(), 2);
+  ce->store_parameter(_index->as_register(), 1);
+  ce->store_parameter(_value->as_register(), 0);
+  __ call(RuntimeAddress(Runtime1::entry_for(StubId::c1_store_flat_array_id)));
+  ce->add_call_info_here(_info);
+  ce->verify_oop_map(_info);
+  __ jmp(_continuation);
+#endif 
+}
+
+
+// Implementation of SubstitutabilityCheckStub
+
+SubstitutabilityCheckStub::SubstitutabilityCheckStub(LIR_Opr left, LIR_Opr right, CodeEmitInfo* info) {
+  assert(false, "SubstitutabilityCheckStub::SubstitutabilityCheckStub");
+#if 0
+  _left = left;
+  _right = right;
+  // Tell the register allocator that the runtime call will scratch rax.
+  _scratch_reg = FrameMap::rax_oop_opr;
+  _info = new CodeEmitInfo(info);
+#endif
+}
+
+void SubstitutabilityCheckStub::emit_code(LIR_Assembler* ce) {
+  assert(false, "SubstitutabilityCheckStub::emit_code");
+#if 0
+  assert(__ rsp_offset() == 0, "frame size should be fixed");
+  __ bind(_entry);
+  ce->store_parameter(_left->as_register(), 1);
+  ce->store_parameter(_right->as_register(), 0);
+  __ call(RuntimeAddress(Runtime1::entry_for(StubId::c1_substitutability_check_id)));
+  ce->add_call_info_here(_info);
+  ce->verify_oop_map(_info);
+  __ jmp(_continuation);
+#endif
+}
+
+
 
 #undef __

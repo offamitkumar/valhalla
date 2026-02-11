@@ -28,12 +28,15 @@
 #define CPU_S390_MACROASSEMBLER_S390_HPP
 
 #include "asm/assembler.hpp"
+#include "runtime/signature.hpp"
 #include "oops/accessDecorators.hpp"
 
 #define MODERN_IFUN(name)  ((void (MacroAssembler::*)(Register, int64_t, Register, Register))&MacroAssembler::name)
 #define CLASSIC_IFUN(name) ((void (MacroAssembler::*)(Register, int64_t, Register, Register))&MacroAssembler::name)
 #define MODERN_FFUN(name)  ((void (MacroAssembler::*)(FloatRegister, int64_t, Register, Register))&MacroAssembler::name)
 #define CLASSIC_FFUN(name) ((void (MacroAssembler::*)(FloatRegister, int64_t, Register, Register))&MacroAssembler::name)
+
+class ciInlineKlass;
 
 class MacroAssembler: public Assembler {
  public:
@@ -1109,6 +1112,20 @@ class MacroAssembler: public Assembler {
 
   void load_on_condition_imm_32(Register dst, int64_t i2, branch_condition cc);
   void load_on_condition_imm_64(Register dst, int64_t i2, branch_condition cc);
+
+  // Inline type specific methods
+  #include "asm/macroAssembler_common.hpp"
+  int store_inline_type_fields_to_buf(ciInlineKlass* vk, bool from_interpreter = true);
+  bool move_helper(VMReg from, VMReg to, BasicType bt, RegState reg_state[]);
+  bool unpack_inline_helper(const GrowableArray<SigEntry>* sig, int& sig_index,
+                            VMReg from, int& from_index, VMRegPair* to, int to_count, int& to_index,
+                            RegState reg_state[]);
+  bool pack_inline_helper(const GrowableArray<SigEntry>* sig, int& sig_index, int vtarg_index,
+                          VMRegPair* from, int from_count, int& from_index, VMReg to,
+                          RegState reg_state[], Register val_array);
+  int extend_stack_for_inline_args(int args_on_stack);
+  void remove_frame(int initial_framesize, bool needs_stack_repair);
+  VMReg spill_reg_for(VMReg reg);
 };
 
 #ifdef ASSERT

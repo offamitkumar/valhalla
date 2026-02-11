@@ -1160,11 +1160,6 @@ void MachPrologNode::emit(C2_MacroAssembler *masm, PhaseRegAlloc *ra_) const {
   C->output()->set_frame_complete(__ offset());
 }
 
-uint MachPrologNode::size(PhaseRegAlloc *ra_) const {
-  // Variable size. Determine dynamically.
-  return MachNode::size(ra_);
-}
-
 int MachPrologNode::reloc() const {
   // Return number of relocatable values contained in this instruction.
   return 1; // One reloc entry for load_const(toc).
@@ -1205,11 +1200,6 @@ void MachEpilogNode::emit(C2_MacroAssembler *masm, PhaseRegAlloc *ra_) const {
     __ relocate(relocInfo::poll_return_type);
     __ load_from_polling_page(Z_R1_scratch);
   }
-}
-
-uint MachEpilogNode::size(PhaseRegAlloc *ra_) const {
-  // Variable size. determine dynamically.
-  return MachNode::size(ra_);
 }
 
 int MachEpilogNode::reloc() const {
@@ -1575,6 +1565,52 @@ uint BoxLockNode::size(PhaseRegAlloc *ra_) const {
   return 6;
 }
 
+//=============================================================================
+#ifndef PRODUCT
+void MachVEPNode::format(PhaseRegAlloc* ra_, outputStream* st) const
+{
+  st->print_cr("MachVEPNode");
+}
+#endif
+
+void MachVEPNode::emit(C2_MacroAssembler* masm, PhaseRegAlloc* ra_) const
+{
+  __ stop(" MachVEPNode::emit(C2_MacroAssembler* masm, PhaseRegAlloc* ra_)");
+#if 0
+  CodeBuffer* cbuf = masm->code();
+  uint insts_size = cbuf->insts_size();
+  if (!_verified) {
+    __ ic_check(1);
+  } else {
+    // TODO 8284443 Avoid creation of temporary frame
+    if (ra_->C->stub_function() == nullptr) {
+      __ verified_entry(ra_->C, 0);
+      __ entry_barrier();
+      int initial_framesize = ra_->C->output()->frame_size_in_bytes() - 2*wordSize;
+      __ remove_frame(initial_framesize, false);
+    }
+    // Unpack inline type args passed as oop and then jump to
+    // the verified entry point (skipping the unverified entry).
+    int sp_inc = __ unpack_inline_args(ra_->C, _receiver_only);
+    // Emit code for verified entry and save increment for stack repair on return
+    __ verified_entry(ra_->C, sp_inc);
+    if (Compile::current()->output()->in_scratch_emit_size()) {
+      Label dummy_verified_entry;
+      __ jmp(dummy_verified_entry);
+    } else {
+      __ jmp(*_verified_entry);
+    }
+  }
+  /* WARNING these NOPs are critical so that verified entry point is properly
+     4 bytes aligned for patching by NativeJump::patch_verified_entry() */
+  int nops_cnt = 4 - ((cbuf->insts_size() - insts_size) & 0x3);
+  nops_cnt &= 0x3; // Do not add nops if code is aligned.
+  if (nops_cnt > 0) {
+    __ nop(nops_cnt);
+  }
+#endif 
+}
+
  %} // end source section
 
 //----------SOURCE BLOCK-------------------------------------------------------
@@ -1633,11 +1669,6 @@ void MachUEPNode::format(PhaseRegAlloc *ra_, outputStream *os) const {
 void MachUEPNode::emit(C2_MacroAssembler *masm, PhaseRegAlloc *ra_) const {
   // This is Unverified Entry Point
   __ ic_check(CodeEntryAlignment);
-}
-
-uint MachUEPNode::size(PhaseRegAlloc *ra_) const {
-  // Determine size dynamically.
-  return MachNode::size(ra_);
 }
 
 //=============================================================================
