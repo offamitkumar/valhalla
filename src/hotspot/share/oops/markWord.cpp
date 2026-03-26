@@ -75,9 +75,6 @@ void markWord::print_on(outputStream* st, bool print_monitor_info) const {
       st->print("is_unlocked");
       if (is_inline_type()) {
         st->print(" inline_type");
-        if (is_larval_state()) {
-          st->print("=larval");
-        }
       }
       if (has_no_hash()) {
         st->print(" no_hash");
@@ -103,18 +100,10 @@ void markWord::print_on(outputStream* st, bool print_monitor_info) const {
   }
 }
 
-markWord markWord::flat_array_prototype(LayoutKind lk) {
-  switch(lk) {
-    case LayoutKind::NULL_FREE_ATOMIC_FLAT:
-    case LayoutKind::NULL_FREE_NON_ATOMIC_FLAT:
-      return markWord(null_free_flat_array_pattern);
-      break;
-    case LayoutKind::NULLABLE_ATOMIC_FLAT:
-      return markWord(nullable_flat_array_pattern);
-      break;
-    case LayoutKind::NULLABLE_NON_ATOMIC_FLAT:
-      ShouldNotReachHere();
-    default:
-      ShouldNotReachHere();
+markWord markWord::flat_array_prototype(bool null_free) {
+  if (null_free) {
+    return markWord(null_free_flat_array_pattern);
+  } else {
+    return markWord(nullable_flat_array_pattern);
   }
 }

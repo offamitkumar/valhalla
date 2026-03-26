@@ -36,6 +36,7 @@
 #include "memory/resourceArea.hpp"
 #include "oops/flatArrayKlass.hpp"
 #include "opto/addnode.hpp"
+#include "opto/callnode.hpp"
 #include "opto/castnode.hpp"
 #include "opto/convertnode.hpp"
 #include "opto/graphKit.hpp"
@@ -44,6 +45,7 @@
 #include "opto/intrinsicnode.hpp"
 #include "opto/locknode.hpp"
 #include "opto/machnode.hpp"
+#include "opto/memnode.hpp"
 #include "opto/multnode.hpp"
 #include "opto/narrowptrnode.hpp"
 #include "opto/opaquenode.hpp"
@@ -93,7 +95,26 @@ GraphKit::GraphKit()
   DEBUG_ONLY(set_bci(-99));
 }
 
-
+GraphKit::GraphKit(const SafePointNode* sft, PhaseIterGVN& igvn)
+  : Phase(Phase::Parser),
+    _env(C->env()),
+    _gvn(igvn),
+    _exceptions(nullptr),
+    _barrier_set(BarrierSet::barrier_set()->barrier_set_c2()) {
+  assert(igvn.delay_transform(), "must delay transformation during macro expansion");
+  assert(sft->next_exception() == nullptr, "must not have a pending exception");
+  JVMState* cloned_jvms = sft->jvms()->clone_deep(C);
+  SafePointNode* cloned_map = new SafePointNode(sft->req(), cloned_jvms);
+  for (uint i = 0; i < sft->req(); i++) {
+    cloned_map->init_req(i, sft->in(i));
+  }
+  igvn.record_for_igvn(cloned_map);
+  for (JVMState* current = cloned_jvms; current != nullptr; current = current->caller()) {
+    current->set_map(cloned_map);
+  }
+  set_jvms(cloned_jvms);
+  set_all_memory(reset_memory());
+}
 
 //---------------------------clean_stack---------------------------------------
 // Clear away rubbish from the stack area of the JVM state.
@@ -688,6 +709,48 @@ ciInstance* GraphKit::builtin_throw_exception(Deoptimization::DeoptReason reason
   }
 }
 
+GraphKit::SavedState::SavedState(GraphKit* kit) :
+  _kit(kit),
+  _sp(kit->sp()),
+  _jvms(kit->jvms()),
+  _map(kit->clone_map()),
+  _discarded(false)
+{
+  for (DUIterator_Fast imax, i = kit->control()->fast_outs(imax); i < imax; i++) {
+    Node* out = kit->control()->fast_out(i);
+    if (out->is_CFG()) {
+      _ctrl_succ.push(out);
+    }
+  }
+}
+
+GraphKit::SavedState::~SavedState() {
+  if (_discarded) {
+    _kit->destruct_map_clone(_map);
+    return;
+  }
+  _kit->jvms()->set_map(_map);
+  _kit->jvms()->set_sp(_sp);
+  _map->set_jvms(_kit->jvms());
+  _kit->set_map(_map);
+  _kit->set_sp(_sp);
+  for (DUIterator_Fast imax, i = _kit->control()->fast_outs(imax); i < imax; i++) {
+    Node* out = _kit->control()->fast_out(i);
+    if (out->is_CFG() && out->in(0) == _kit->control() && out != _kit->map() && !_ctrl_succ.member(out)) {
+      _kit->_gvn.hash_delete(out);
+      out->set_req(0, _kit->C->top());
+      _kit->C->record_for_igvn(out);
+      --i; --imax;
+      _kit->_gvn.hash_find_insert(out);
+    }
+  }
+}
+
+void GraphKit::SavedState::discard() {
+  _discarded = true;
+}
+
+
 //----------------------------PreserveJVMState---------------------------------
 PreserveJVMState::PreserveJVMState(GraphKit* kit, bool clone_map) {
   DEBUG_ONLY(kit->verify_map());
@@ -1201,7 +1264,21 @@ bool GraphKit::compute_stack_effects(int& inputs, int& depth) {
 //------------------------------basic_plus_adr---------------------------------
 Node* GraphKit::basic_plus_adr(Node* base, Node* ptr, Node* offset) {
   // short-circuit a common case
-  if (offset == intcon(0))  return ptr;
+  if (offset == MakeConX(0)) {
+    return ptr;
+  }
+#ifdef ASSERT
+  // Both 32-bit and 64-bit zeros should have been handled by the previous `if`
+  // statement, so if we see either 32-bit or 64-bit zeros here, then we have a
+  // problem.
+  if (offset->is_Con()) {
+    const Type* t = offset->bottom_type();
+    bool is_zero_int = t->isa_int() && t->is_int()->get_con() == 0;
+    bool is_zero_long = t->isa_long() && t->is_long()->get_con() == 0;
+    assert(!is_zero_int && !is_zero_long,
+           "Unexpected zero offset - should have matched MakeConX(0)");
+  }
+#endif
   return _gvn.transform( new AddPNode(base, ptr, offset) );
 }
 
@@ -1528,7 +1605,7 @@ Node* GraphKit::cast_not_null(Node* obj, bool do_replace_in_map) {
 // In that case that data path will die and we need the control path
 // to become dead as well to keep the graph consistent. So we have to
 // add a check for null for which one branch can't be taken. It uses
-// an OpaqueNotNull node that will cause the check to be removed after loop
+// an OpaqueConstantBool node that will cause the check to be removed after loop
 // opts so the test goes away and the compiled code doesn't execute a
 // useless check.
 Node* GraphKit::must_be_not_null(Node* value, bool do_replace_in_map) {
@@ -1537,7 +1614,7 @@ Node* GraphKit::must_be_not_null(Node* value, bool do_replace_in_map) {
   }
   Node* chk = _gvn.transform(new CmpPNode(value, null()));
   Node* tst = _gvn.transform(new BoolNode(chk, BoolTest::ne));
-  Node* opaq = _gvn.transform(new OpaqueNotNullNode(C, tst));
+  Node* opaq = _gvn.transform(new OpaqueConstantBoolNode(C, tst, true));
   IfNode* iff = new IfNode(control(), opaq, PROB_MAX, COUNT_UNKNOWN);
   _gvn.set_type(iff, iff->Value(&_gvn));
   if (!tst->is_Con()) {
@@ -1600,6 +1677,9 @@ Node* GraphKit::reset_memory() {
 void GraphKit::set_all_memory(Node* newmem) {
   Node* mergemem = MergeMemNode::make(newmem);
   gvn().set_type_bottom(mergemem);
+  if (_gvn.is_IterGVN() != nullptr) {
+    record_for_igvn(mergemem);
+  }
   map()->set_memory(mergemem);
 }
 
@@ -1731,13 +1811,22 @@ Node* GraphKit::access_load_at(Node* obj,   // containing obj
     return top(); // Dead path ?
   }
 
+  SavedState old_state(this);
   C2AccessValuePtr addr(adr, adr_type);
   C2ParseAccess access(this, decorators | C2_READ_ACCESS, bt, obj, addr, ctl);
+  Node* load;
   if (access.is_raw()) {
-    return _barrier_set->BarrierSetC2::load_at(access, val_type);
+    load = _barrier_set->BarrierSetC2::load_at(access, val_type);
   } else {
-    return _barrier_set->load_at(access, val_type);
+    load = _barrier_set->load_at(access, val_type);
   }
+
+  // Restore the previous state only if the load got folded to a constant
+  // and we can discard any barriers that might have been added.
+  if (load == nullptr || !load->is_Con()) {
+    old_state.discard();
+  }
+  return load;
 }
 
 Node* GraphKit::access_load(Node* adr,   // actual address to load val at
@@ -1748,13 +1837,22 @@ Node* GraphKit::access_load(Node* adr,   // actual address to load val at
     return top(); // Dead path ?
   }
 
+  SavedState old_state(this);
   C2AccessValuePtr addr(adr, adr->bottom_type()->is_ptr());
   C2ParseAccess access(this, decorators | C2_READ_ACCESS, bt, nullptr, addr);
+  Node* load;
   if (access.is_raw()) {
-    return _barrier_set->BarrierSetC2::load_at(access, val_type);
+    load = _barrier_set->BarrierSetC2::load_at(access, val_type);
   } else {
-    return _barrier_set->load_at(access, val_type);
+    load = _barrier_set->load_at(access, val_type);
   }
+
+  // Restore the previous state only if the load got folded to a constant
+  // and we can discard any barriers that might have been added.
+  if (load == nullptr || !load->is_Con()) {
+    old_state.discard();
+  }
+  return load;
 }
 
 Node* GraphKit::access_atomic_cmpxchg_val_at(Node* obj,
@@ -2089,12 +2187,6 @@ Node* GraphKit::set_results_for_java_call(CallJavaNode* call, bool separate_io_p
       sync_kit(ideal);
       ret = _gvn.transform(ideal.value(res));
     }
-    if (t->is_klass()) {
-      const Type* type = TypeOopPtr::make_from_klass(t->as_klass());
-      if (type->is_inlinetypeptr()) {
-        ret = InlineTypeNode::make_from_oop(this, ret, type->inline_klass());
-      }
-    }
   }
 
   return ret;
@@ -2323,6 +2415,9 @@ void GraphKit::halt(Node* ctrl, Node* frameptr, const char* reason, bool generat
                             PRODUCT_ONLY(COMMA generate_code_in_product));
   halt = _gvn.transform(halt);
   root()->add_req(halt);
+  if (_gvn.is_IterGVN() != nullptr) {
+    record_for_igvn(root());
+  }
 }
 
 //------------------------------uncommon_trap----------------------------------
@@ -3009,7 +3104,7 @@ Node* Phase::gen_subtype_check(Node* subklass, Node* superklass, Node** ctrl, No
   // will always succeed.  We could leave a dependency behind to ensure this.
 
   // First load the super-klass's check-offset
-  Node *p1 = gvn.transform(new AddPNode(superklass, superklass, gvn.MakeConX(in_bytes(Klass::super_check_offset_offset()))));
+  Node *p1 = gvn.transform(new AddPNode(C->top(), superklass, gvn.MakeConX(in_bytes(Klass::super_check_offset_offset()))));
   Node* m = C->immutable_memory();
   Node *chk_off = gvn.transform(new LoadINode(nullptr, m, p1, gvn.type(p1)->is_ptr(), TypeInt::INT, MemNode::unordered));
   int cacheoff_con = in_bytes(Klass::secondary_super_cache_offset());
@@ -3027,7 +3122,7 @@ Node* Phase::gen_subtype_check(Node* subklass, Node* superklass, Node** ctrl, No
 #ifdef _LP64
   chk_off_X = gvn.transform(new ConvI2LNode(chk_off_X));
 #endif
-  Node *p2 = gvn.transform(new AddPNode(subklass,subklass,chk_off_X));
+  Node* p2 = gvn.transform(new AddPNode(C->top(), subklass, chk_off_X));
   // For some types like interfaces the following loadKlass is from a 1-word
   // cache which is mutable so can't use immutable memory.  Other
   // types load from the super-class display table which is immutable.
@@ -3842,7 +3937,7 @@ Node* GraphKit::mark_word_test(Node* obj, uintptr_t mask_val, bool eq, bool chec
     // Make loads control dependent to make sure they are only executed if array is locked
     Node* klass_adr = basic_plus_adr(obj, oopDesc::klass_offset_in_bytes());
     Node* klass = _gvn.transform(LoadKlassNode::make(_gvn, C->immutable_memory(), klass_adr, TypeInstPtr::KLASS, TypeInstKlassPtr::OBJECT));
-    Node* proto_adr = basic_plus_adr(klass, in_bytes(Klass::prototype_header_offset()));
+    Node* proto_adr = basic_plus_adr(top(), klass, in_bytes(Klass::prototype_header_offset()));
     Node* proto = _gvn.transform(LoadNode::make(_gvn, control(), C->immutable_memory(), proto_adr, proto_adr->bottom_type()->is_ptr(), TypeX_X, TypeX_X->basic_type(), MemNode::unordered));
 
     locked_region->init_req(2, control());
@@ -3890,7 +3985,7 @@ Node* GraphKit::null_free_atomic_array_test(Node* array, ciInlineKlass* vk) {
 
   Node* array_klass = load_object_klass(array);
   int layout_kind_offset = in_bytes(FlatArrayKlass::layout_kind_offset());
-  Node* layout_kind_addr = basic_plus_adr(array_klass, array_klass, layout_kind_offset);
+  Node* layout_kind_addr = basic_plus_adr(top(), array_klass, layout_kind_offset);
   Node* layout_kind = make_load(nullptr, layout_kind_addr, TypeInt::INT, T_INT, MemNode::unordered);
   Node* cmp = _gvn.transform(new CmpINode(layout_kind, intcon((int)LayoutKind::NULL_FREE_ATOMIC_FLAT)));
   return _gvn.transform(new BoolNode(cmp, BoolTest::eq));
@@ -4128,7 +4223,7 @@ Node* GraphKit::get_layout_helper(Node* klass_node, jint& constant_value) {
     }
   }
   constant_value = Klass::_lh_neutral_value;  // put in a known value
-  Node* lhp = basic_plus_adr(klass_node, klass_node, in_bytes(Klass::layout_helper_offset()));
+  Node* lhp = basic_plus_adr(top(), klass_node, in_bytes(Klass::layout_helper_offset()));
   return make_load(nullptr, lhp, TypeInt::INT, T_INT, MemNode::unordered);
 }
 
@@ -4846,7 +4941,7 @@ Node* GraphKit::make_constant_from_field(ciField* field, Node* obj) {
   return nullptr;
 }
 
-Node* GraphKit::maybe_narrow_object_type(Node* obj, ciKlass* type) {
+Node* GraphKit::maybe_narrow_object_type(Node* obj, ciKlass* type, bool maybe_larval) {
   const Type* obj_type = obj->bottom_type();
   const TypeOopPtr* sig_type = TypeOopPtr::make_from_klass(type);
   if (obj_type->isa_oopptr() && sig_type->is_loaded() && !obj_type->higher_equal(sig_type)) {
@@ -4854,7 +4949,7 @@ Node* GraphKit::maybe_narrow_object_type(Node* obj, ciKlass* type) {
     Node* casted_obj = gvn().transform(new CheckCastPPNode(control(), obj, narrow_obj_type));
     obj = casted_obj;
   }
-  if (sig_type->is_inlinetypeptr()) {
+  if (!maybe_larval && sig_type->is_inlinetypeptr()) {
     obj = InlineTypeNode::make_from_oop(this, obj, sig_type->inline_klass());
   }
   return obj;

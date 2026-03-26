@@ -44,9 +44,9 @@ class RefArrayKlass : public ObjArrayKlass {
 
  private:
   // Constructor
-  RefArrayKlass(int n, Klass* element_klass, Symbol* name, ArrayKlass::ArrayProperties props);
+  RefArrayKlass(int n, Klass* element_klass, Symbol* name, ArrayProperties props);
   static RefArrayKlass* allocate_klass(ClassLoaderData* loader_data, int n, Klass* k, Symbol* name,
-                                       ArrayKlass::ArrayProperties props, TRAPS);
+                                       ArrayProperties props, TRAPS);
 
  public:
   // For dummy objects
@@ -54,18 +54,16 @@ class RefArrayKlass : public ObjArrayKlass {
 
   // Dispatched operation
   DEBUG_ONLY(bool is_refArray_klass_slow() const override { return true; })
-  size_t oop_size(oop obj) const override;  // TODO FIXME make it virtual in objArrayKlass
+  size_t oop_size(oop obj) const override;
 
   // Allocation
   static RefArrayKlass* allocate_refArray_klass(ClassLoaderData* loader_data,
                                                 int n, Klass* element_klass,
-                                                ArrayKlass::ArrayProperties props, TRAPS);
+                                                ArrayProperties props, TRAPS);
 
- private:
-  objArrayOop allocate_instance(int length, ArrayProperties props, TRAPS) override;
+  refArrayOop allocate_instance(int length, TRAPS);
 
- public:
-  // Copying TODO FIXME make copying method in objArrayKlass virtual and default implementation invalid (ShouldNotReachHere())
+  // Copying
   void copy_array(arrayOop s, int src_pos, arrayOop d, int dst_pos, int length, TRAPS) override;
 
   void metaspace_pointers_do(MetaspaceClosure* iter) override;

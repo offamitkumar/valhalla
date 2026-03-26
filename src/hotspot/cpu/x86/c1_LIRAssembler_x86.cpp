@@ -34,6 +34,7 @@
 #include "ci/ciInlineKlass.hpp"
 #include "ci/ciInstance.hpp"
 #include "ci/ciObjArrayKlass.hpp"
+#include "code/aotCodeCache.hpp"
 #include "compiler/oopMap.hpp"
 #include "gc/shared/collectedHeap.hpp"
 #include "gc/shared/gc_globals.hpp"
@@ -586,6 +587,15 @@ void LIR_Assembler::const2reg(LIR_Opr src, LIR_Opr dest, LIR_PatchCode patch_cod
 
     case T_LONG: {
       assert(patch_code == lir_patch_none, "no patching handled here");
+#if INCLUDE_CDS
+      if (AOTCodeCache::is_on_for_dump()) {
+        address b = c->as_pointer();
+        if (AOTRuntimeConstants::contains(b)) {
+          __ load_aotrc_address(dest->as_register_lo(), b);
+          break;
+        }
+      }
+#endif
       __ movptr(dest->as_register_lo(), (intptr_t)c->as_jlong());
       break;
     }
@@ -2848,7 +2858,6 @@ void LIR_Assembler::emit_arraycopy(LIR_OpArrayCopy* op) {
     // subtype which we can't check or src is the same array as dst
     // but not necessarily exactly of type default_type.
     Label known_ok, halt;
-
     __ mov_metadata(tmp, default_type->constant_encoding());
     if (UseCompressedClassPointers) {
       __ encode_klass_not_null(tmp, rscratch1);

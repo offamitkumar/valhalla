@@ -56,6 +56,9 @@
 #include "utilities/ostream.hpp"
 #include "utilities/powerOfTwo.hpp"
 #include "utilities/stringUtils.hpp"
+#if INCLUDE_SHENANDOAHGC
+#include "gc/shenandoah/c2/shenandoahBarrierSetC2.hpp"
+#endif // INCLUDE_SHENANDOAHGC
 
 // Portions of code courtesy of Clifford Click
 
@@ -101,10 +104,9 @@ void Type::Offset::dump2(outputStream *st) const {
     return;
   } else if (_offset == OffsetTop) {
     st->print("+top");
-  }
-  else if (_offset == OffsetBot) {
+  } else if (_offset == OffsetBot) {
     st->print("+bot");
-  } else if (_offset) {
+  } else {
     st->print("+%d", _offset);
   }
 }
@@ -149,7 +151,7 @@ const Type::TypeInfo Type::_type_info[Type::lastype] = {
   { Bad,             T_ILLEGAL,    "vectorz:",      false, Op_VecZ,              relocInfo::none          },  // VectorZ
 #endif
   { Bad,             T_ADDRESS,    "anyptr:",       false, Op_RegP,              relocInfo::none          },  // AnyPtr
-  { Bad,             T_ADDRESS,    "rawptr:",       false, Op_RegP,              relocInfo::none          },  // RawPtr
+  { Bad,             T_ADDRESS,    "rawptr:",       false, Op_RegP,              relocInfo::external_word_type },  // RawPtr
   { Bad,             T_OBJECT,     "oop:",          true,  Op_RegP,              relocInfo::oop_type      },  // OopPtr
   { Bad,             T_OBJECT,     "inst:",         true,  Op_RegP,              relocInfo::oop_type      },  // InstPtr
   { Bad,             T_OBJECT,     "ary:",          true,  Op_RegP,              relocInfo::oop_type      },  // AryPtr
@@ -400,7 +402,12 @@ static const Type* make_constant_from_non_flat_array_element(ciArray* array, int
 
 static const Type* make_constant_from_flat_array_element(ciFlatArray* array, int off, int field_offset, int stable_dimension,
                                                          BasicType loadbt, bool is_unsigned_load) {
-  // Decode the results of GraphKit::array_element_address.
+  if (!array->is_null_free()) {
+    ciConstant nm_value = array->null_marker_of_element_by_offset(off);
+    if (!nm_value.is_valid() || !nm_value.as_boolean()) {
+      return nullptr;
+    }
+  }
   ciConstant element_value = array->field_value_by_offset(off + field_offset);
   if (element_value.basic_type() == T_ILLEGAL) {
     return nullptr; // wrong offset
@@ -410,8 +417,7 @@ static const Type* make_constant_from_flat_array_element(ciFlatArray* array, int
   assert(con.basic_type() != T_ILLEGAL, "elembt=%s; loadbt=%s; unsigned=%d",
          type2name(element_value.basic_type()), type2name(loadbt), is_unsigned_load);
 
-  if (con.is_valid() &&          // not a mismatched access
-      !con.is_null_or_zero()) {  // not a default value
+  if (con.is_valid()) { // not a mismatched access
     bool is_narrow_oop = (loadbt == T_NARROWOOP);
     return Type::make_from_constant(con, /*require_constant=*/true, stable_dimension, is_narrow_oop, /*is_autobox_cache=*/false);
   }
@@ -819,6 +825,11 @@ void Type::Initialize_shared(Compile* current) {
   mreg2type[Op_VecY] = TypeVect::VECTY;
   mreg2type[Op_VecZ] = TypeVect::VECTZ;
 
+#if INCLUDE_SHENANDOAHGC
+  ShenandoahBarrierSetC2::init();
+#endif //INCLUDE_SHENANDOAHGC
+
+  BarrierSetC2::make_clone_type();
   LockNode::initialize_lock_Type();
   ArrayCopyNode::initialize_arraycopy_Type();
   OptoRuntime::initialize_types();
@@ -3199,21 +3210,15 @@ TypePtr::FlatInArray TypePtr::compute_flat_in_array(ciInstanceKlass* instance_kl
 
 // Compute flat in array property if we don't know anything about it (i.e. old_flat_in_array == MaybeFlat).
 TypePtr::FlatInArray TypePtr::compute_flat_in_array_if_unknown(ciInstanceKlass* instance_klass, bool is_exact,
-  FlatInArray old_flat_in_array) const {
-  switch (old_flat_in_array) {
-    case Flat:
-      assert(can_be_inline_type(), "only value objects can be flat in array");
-      assert(!instance_klass->is_inlinetype() || instance_klass->as_inline_klass()->is_always_flat_in_array(),
-             "a value object is only marked flat in array if it's proven to be always flat in array");
-      break;
-    case NotFlat:
-      assert(!instance_klass->maybe_flat_in_array(), "cannot be flat");
-      break;
-    case MaybeFlat:
+  FlatInArray old_flat_in_array) {
+  // It is tempting to add verification code that "NotFlat == no value class" and "Flat == value class".
+  // However, with type speculation, we could get contradicting flat in array properties that propagate through the
+  // graph. We could try to stop the introduction of contradicting speculative types in terms of their flat in array
+  // property. But this is hard because it is sometimes only recognized further down in the graph. Thus, we let an
+  // inconsistent flat in array property propagating through the graph. This could lead to fold an actual live path
+  // away. But in this case, the speculated type is wrong and we would trap earlier.
+  if (old_flat_in_array == MaybeFlat) {
       return compute_flat_in_array(instance_klass, is_exact);
-      break;
-    default:
-      break;
   }
   return old_flat_in_array;
 }

@@ -65,7 +65,7 @@ class Universe: AllStatic {
  private:
   // Known classes in the VM
   static TypeArrayKlass* _typeArrayKlasses[T_LONG+1];
-  static ObjArrayKlass* _objectArrayKlass;
+  static RefArrayKlass* _objectArrayKlass;
   // Special int-Array that represents filler objects that are used by GC to overwrite
   // dead objects. References to them are generally an error.
   static Klass* _fillerArrayKlass;
@@ -129,9 +129,9 @@ class Universe: AllStatic {
   static bool _fully_initialized;                     // true after universe_init and initialize_vtables called
 
   // the array of preallocated errors with backtraces
-  static objArrayOop  preallocated_out_of_memory_errors();
+  static refArrayOop preallocated_out_of_memory_errors();
 
-  static objArrayOop out_of_memory_errors();
+  static refArrayOop out_of_memory_errors();
   // generate an out of memory error; if possible using an error with preallocated backtrace;
   // otherwise return the given default error.
   static oop        gen_out_of_memory_error(oop default_err);
@@ -185,8 +185,8 @@ class Universe: AllStatic {
   static TypeArrayKlass* floatArrayKlass()       { return typeArrayKlass(T_FLOAT); }
   static TypeArrayKlass* doubleArrayKlass()      { return typeArrayKlass(T_DOUBLE); }
 
-  static ObjArrayKlass* objectArrayKlass() {
-    ObjArrayKlass* k = _objectArrayKlass;
+  static RefArrayKlass* objectArrayKlass() {
+    RefArrayKlass* k = _objectArrayKlass;
     assert(k != nullptr, "Object array klass should be initialized; too early?");
     return k;
   }

@@ -862,6 +862,10 @@ bool CallNode::may_modify(const TypeOopPtr* t_oop, PhaseValues* phase) {
       }
     }
     guarantee(dest != nullptr, "Call had only one ptr in, broken IR!");
+    if (phase->type(dest)->isa_rawptr()) {
+      // may happen for an arraycopy that initializes a newly allocated object. Conservatively return true;
+      return true;
+    }
     if (!dest->is_top() && may_modify_arraycopy_helper(phase->type(dest)->is_oopptr(), t_oop, phase)) {
       return true;
     }
@@ -1211,7 +1215,7 @@ Node* CallStaticJavaNode::Ideal(PhaseGVN* phase, bool can_reshape) {
           ptr = base;
         }
         // Emit IR for field-wise comparison
-        vt->check_substitutability(igvn, region, phi, &ctrl, in(MemNode::Memory), base, ptr);
+        vt->check_substitutability(igvn, region, phi, &ctrl, in(TypeFunc::Memory), base, ptr);
 
         // Equals
         region->add_req(ctrl);
@@ -2007,12 +2011,15 @@ Node* AllocateNode::make_ideal_mark(PhaseGVN* phase, Node* control, Node* mem) {
   Node* mark_node = nullptr;
   if (UseCompactObjectHeaders || Arguments::is_valhalla_enabled()) {
     Node* klass_node = in(AllocateNode::KlassNode);
-    Node* proto_adr = phase->transform(new AddPNode(klass_node, klass_node, phase->MakeConX(in_bytes(Klass::prototype_header_offset()))));
-    mark_node = LoadNode::make(*phase, control, mem, proto_adr, TypeRawPtr::BOTTOM, TypeX_X, TypeX_X->basic_type(), MemNode::unordered);
+    Node* proto_adr = phase->transform(new AddPNode(phase->C->top(), klass_node, phase->MakeConX(in_bytes(Klass::prototype_header_offset()))));
+
+    mark_node = LoadNode::make(*phase, control, mem, proto_adr, phase->type(proto_adr)->is_ptr(), TypeX_X, TypeX_X->basic_type(), MemNode::unordered);
     if (Arguments::is_valhalla_enabled()) {
       mark_node = phase->transform(mark_node);
       // Avoid returning a constant (old node) here because this method is used by LoadNode::Ideal
-      mark_node = new OrXNode(mark_node, phase->MakeConX(_larval ? markWord::larval_bit_in_place : 0));
+      // TODO: Could this be removed now that we don't use larval bits
+      assert(!_larval, "Larval bits are not in use at the moment");
+      mark_node = new OrXNode(mark_node, phase->MakeConX(0));
     }
     return mark_node;
   } else {
