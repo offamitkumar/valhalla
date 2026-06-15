@@ -328,6 +328,40 @@ void VM_Version::initialize() {
   if (FLAG_IS_DEFAULT(UseUnalignedAccesses)) {
     FLAG_SET_DEFAULT(UseUnalignedAccesses, true);
   }
+
+  if (InlineTypePassFieldsAsArgs) {
+    warning("InlineTypePassFieldsAsArgs not supported on this CPU.");
+    FLAG_SET_DEFAULT(InlineTypePassFieldsAsArgs, false);
+  }
+  if (InlineTypeReturnedAsFields) {
+    warning("InlineTypeReturnedAsFields not supported on this CPU.");
+    FLAG_SET_DEFAULT(InlineTypeReturnedAsFields, false);
+  }
+  // TODO: Valhalla optimizations
+  if (UseArrayFlattening) {
+    warning("UseArrayFlattening not supported on this CPU.");
+    FLAG_SET_DEFAULT(UseArrayFlattening, false);
+  }
+  if (UseFieldFlattening) {
+    warning("UseFieldFlattening not supported on this CPU.");
+    FLAG_SET_DEFAULT(UseFieldFlattening, false);
+  }
+  if (UseNullFreeNonAtomicValueFlattening) {
+    warning("UseNullFreeNonAtomicValueFlattening not supported on this CPU.");
+    FLAG_SET_DEFAULT(UseNullFreeNonAtomicValueFlattening, false);
+  }
+  if (UseNullableAtomicValueFlattening) {
+    warning("UseNullableAtomicValueFlattening not supported on this CPU.");
+    FLAG_SET_DEFAULT(UseNullableAtomicValueFlattening, false);
+  }
+  if (UseNullFreeAtomicValueFlattening) {
+    warning("UseNullFreeAtomicValueFlattening not supported on this CPU.");
+    FLAG_SET_DEFAULT(UseNullFreeAtomicValueFlattening, false);
+  }
+  if (UseNullableNonAtomicValueFlattening) {
+    warning("UseNullableNonAtomicValueFlattening not supported on this CPU.");
+    FLAG_SET_DEFAULT(UseNullableNonAtomicValueFlattening, false);
+  }
 }
 
 

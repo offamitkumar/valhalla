@@ -3899,6 +3899,41 @@ void MacroAssembler::null_check(Register reg, Register tmp, int64_t offset) {
 }
 
 //-------------------------------------
+//  Valhalla inline type support
+//-------------------------------------
+
+void MacroAssembler::test_markword_is_inline_type(Register markword, Label& is_inline_type) {
+  // TODO: untested test_markword_is_inline_type()
+  STATIC_ASSERT(markWord::inline_type_pattern_mask <= 0xFFFF);
+  STATIC_ASSERT(markWord::inline_type_pattern <= 0x7FFF);
+  
+  const uint16_t mask = markWord::inline_type_pattern_mask;
+  const int16_t pattern = markWord::inline_type_pattern;
+
+  // AND markword with mask (mask is 0x83, fits in 16 bits)
+  z_nill(markword, mask);
+  
+  // Compare with pattern (pattern is 0x81, fits in signed 16-bit immediate)
+  z_cghi(markword, pattern);
+  z_bre(is_inline_type);
+}
+
+void MacroAssembler::test_field_is_null_free_inline_type(Register flags, Register temp_reg, Label& is_null_free) {
+  testbit(flags, ResolvedFieldEntry::is_null_free_inline_type_shift);
+  z_brc(Assembler::bcondNotZero, is_null_free);
+}
+
+void MacroAssembler::test_field_is_not_null_free_inline_type(Register flags, Register temp_reg, Label& not_null_free_inline_type) {
+  testbit(flags, ResolvedFieldEntry::is_null_free_inline_type_shift);
+  z_brc(Assembler::bcondZero, not_null_free_inline_type);
+}
+
+void MacroAssembler::test_field_is_flat(Register flags, Register temp_reg, Label& is_flat) {
+  testbit(flags, ResolvedFieldEntry::is_flat_shift);
+  z_brc(Assembler::bcondNotZero, is_flat);
+}
+
+//-------------------------------------
 //  Compressed Klass Pointers
 //-------------------------------------
 
@@ -4187,6 +4222,49 @@ void MacroAssembler::store_klass_gap(Register s, Register d) {
     z_mvhi(Address(d, oopDesc::klass_gap_offset_in_bytes()), 0);
   }
 }
+void MacroAssembler::test_oop_prototype_bit(Register oop, Register temp_reg, int32_t test_bit, bool jmp_set, Label& jmp_label) {
+  // untested("test_oop_prototype_bit");
+  Label test_mark_word;
+  // Load mark word
+  z_lg(temp_reg, oopDesc::mark_offset_in_bytes(), oop);
+  // If unlocked bit is set we can directly use the mark word
+  z_tmll(temp_reg, markWord::unlocked_value);
+  z_brnaz(test_mark_word);
+  // Slow path: use klass prototype
+  load_klass(temp_reg, oop);
+  z_lg(temp_reg, Address(temp_reg, in_bytes(Klass::prototype_header_offset())));
+
+  bind(test_mark_word);
+  z_tmll(temp_reg, test_bit);
+  if (jmp_set) {
+    z_brnaz(jmp_label);
+  } else {
+    z_braz(jmp_label);
+  }
+}
+
+void MacroAssembler::test_flat_array_oop(Register oop, Register temp_reg, Label& is_flat_array) {
+  test_oop_prototype_bit(oop, temp_reg, markWord::flat_array_bit_in_place, true, is_flat_array);
+}
+
+void MacroAssembler::test_non_flat_array_oop(Register oop, Register temp_reg, Label& is_non_flat_array) {
+  test_oop_prototype_bit(oop, temp_reg, markWord::flat_array_bit_in_place, false, is_non_flat_array);
+}
+
+void MacroAssembler::test_null_free_array_oop(Register oop, Register temp_reg, Label& is_null_free_array) {
+  test_oop_prototype_bit(oop, temp_reg, markWord::null_free_array_bit_in_place, true, is_null_free_array);
+}
+
+void MacroAssembler::test_non_null_free_array_oop(Register oop, Register temp_reg, Label& is_non_null_free_array) {
+  test_oop_prototype_bit(oop, temp_reg, markWord::null_free_array_bit_in_place, false, is_non_null_free_array);
+}
+
+void MacroAssembler::test_flat_array_layout(Register lh, Label& is_flat_array) {
+  // Test the layout helper for the flat array bit
+  z_tmll(lh, Klass::_lh_array_tag_flat_value_bit_inplace);
+  z_brnaz(is_flat_array);
+}
+
 
 // Compare klass ptr in memory against klass ptr in register.
 //
@@ -6770,6 +6848,8 @@ void MacroAssembler::load_on_condition_imm_64(Register dst, int64_t i2, branch_c
 // Unimplemented methods for inline types.
 int MacroAssembler::store_inline_type_fields_to_buf(ciInlineKlass* vk, bool from_interpreter) {
    Unimplemented();
+   stop("implement function MacroAssembler::store_inline_type_fields_to_buf");
+   return 0;
 }
 
 bool MacroAssembler::move_helper(VMReg from, VMReg to, BasicType bt, RegState reg_state[]) {

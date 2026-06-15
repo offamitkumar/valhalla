@@ -519,6 +519,9 @@ void LIR_Assembler::call(LIR_OpJavaCall* op, relocInfo::relocType rtype) {
   assert(rtype == relocInfo::none ||
          rtype == relocInfo::opt_virtual_call_type ||
          rtype == relocInfo::static_call_type, "unexpected rtype");
+  if (op->maybe_return_as_fields()) {
+    __ stop("implement function LIR_Assembler::call");
+  }
   // Prepend each BRASL with a nop.
   __ relocate(rtype);
   __ z_nop();
@@ -888,6 +891,22 @@ Address LIR_Assembler::as_Address_lo(LIR_Address* addr) {
   return Address(); // unused
 }
 
+void LIR_Assembler::move(LIR_Opr src, LIR_Opr dst) {
+  assert(false, "untested");
+  assert(dst->is_cpu_register(), "must be");
+  assert(dst->type() == src->type(), "must be");
+
+  if (src->is_cpu_register()) {
+    reg2reg(src, dst);
+  } else if (src->is_stack()) {
+    stack2reg(src, dst, dst->type());
+  } else if (src->is_constant()) {
+    const2reg(src, dst, lir_patch_none, nullptr);
+  } else {
+    ShouldNotReachHere();
+  }
+}
+
 void LIR_Assembler::mem2reg(LIR_Opr src_opr, LIR_Opr dest, BasicType type, LIR_PatchCode patch_code,
                             CodeEmitInfo* info, bool wide) {
 
@@ -1213,6 +1232,10 @@ void LIR_Assembler::return_op(LIR_Opr result, C1SafepointPollStub* code_stub) {
          (result->is_double_cpu() && result->as_register_lo() == Z_R2) ||
          (result->is_single_fpu() && result->as_float_reg() == Z_F0) ||
          (result->is_double_fpu() && result->as_double_reg() == Z_F0), "convention");
+
+  if (InlineTypeReturnedAsFields) {
+    __ stop("implement function LIR_Assembler::return_op");
+  }
 
   __ z_lg(Z_R1_scratch, Address(Z_thread, JavaThread::polling_page_offset()));
 
@@ -1965,6 +1988,12 @@ void LIR_Assembler::emit_arraycopy(LIR_OpArrayCopy* op) {
   BasicType basic_type = default_type != nullptr ? default_type->element_type()->basic_type() : T_ILLEGAL;
   if (basic_type == T_ARRAY) basic_type = T_OBJECT;
 
+  if (flags & LIR_OpArrayCopy::always_slow_path) {
+    __ branch_optimized(Assembler::bcondAlways, *stub->entry());
+    __ bind(*stub->continuation());
+    return;
+  }
+
   // If we don't know anything, just go through the generic arraycopy.
   if (default_type == nullptr) {
     address copyfunc_addr = StubRoutines::generic_arraycopy();
@@ -2032,6 +2061,14 @@ void LIR_Assembler::emit_arraycopy(LIR_OpArrayCopy* op) {
 
     __ bind(*stub->continuation());
     return;
+  }
+
+  // Handle inline type arrays
+  if (flags & LIR_OpArrayCopy::src_inlinetype_check) {
+    arraycopy_inlinetype_check(src, tmp, stub, false, (flags & LIR_OpArrayCopy::src_null_check));
+  }
+  if (flags & LIR_OpArrayCopy::dst_inlinetype_check) {
+    arraycopy_inlinetype_check(dst, tmp, stub, true, (flags & LIR_OpArrayCopy::dst_null_check));
   }
 
   assert(default_type != nullptr && default_type->is_array_klass() && default_type->is_loaded(), "must be true at this point");
@@ -2471,6 +2508,10 @@ void LIR_Assembler::emit_typecheck_helper(LIR_OpTypeCheck *op, Label* success, L
   Register dst = op->result_opr()->as_register();
   Register Rtmp1 = Z_R1_scratch;
   ciKlass* k = op->klass();
+
+  if (!op->need_null_check()) {
+    __ stop("implement function LIR_Assembler::emit_typecheck_helper");
+  }
 
   assert(!op->tmp3()->is_valid(), "tmp3's not needed");
 
@@ -3073,7 +3114,7 @@ void LIR_Assembler::emit_profile_type(LIR_OpProfileType* op) {
 }
 
 void LIR_Assembler::emit_profile_inline_type(LIR_OpProfileInlineType* op) {
-  Unimplemented();
+  __ stop("implement function LIR_Assembler::emit_profile_inline_type");
 }
 
 void LIR_Assembler::emit_updatecrc32(LIR_OpUpdateCRC32* op) {
@@ -3094,23 +3135,38 @@ void LIR_Assembler::emit_updatecrc32(LIR_OpUpdateCRC32* op) {
 // Valhalla support
 
 void LIR_Assembler::check_orig_pc() {
-  Unimplemented();
+  __ stop("implement function LIR_Assembler::check_orig_pc");
 }
 
 int LIR_Assembler::store_inline_type_fields_to_buf(ciInlineKlass* vk) {
   Unimplemented();
+  __ stop("implement function LIR_Assembler::store_inline_type_fields_to_buf");
   return 0;
 }
 
 void LIR_Assembler::emit_opFlattenedArrayCheck(LIR_OpFlattenedArrayCheck* op) {
-  Unimplemented();
+  __ stop("implement function LIR_Assembler::emit_opFlattenedArrayCheck");
 }
 
 void LIR_Assembler::emit_opNullFreeArrayCheck(LIR_OpNullFreeArrayCheck* op) {
-  Unimplemented();
+  __ stop("implement function LIR_Assembler::emit_opNullFreeArrayCheck");
 }
 
 void LIR_Assembler::emit_opSubstitutabilityCheck(LIR_OpSubstitutabilityCheck* op) {
-  Unimplemented();
+  __ stop("implement function LIR_Assembler::emit_opSubstitutabilityCheck");
+}
+
+void LIR_Assembler::arraycopy_inlinetype_check(Register obj, Register tmp, CodeStub* slow_path, bool is_dest, bool null_check) {
+  __ untested("arraycopy_inlinetype_check");
+  
+  if (null_check) {
+    __ compare64_and_branch(obj, (intptr_t)0, Assembler::bcondEqual, *slow_path->entry());
+  }
+  if (is_dest) {
+    __ test_null_free_array_oop(obj, tmp, *slow_path->entry());
+    __ test_flat_array_oop(obj, tmp, *slow_path->entry());
+  } else {
+    __ test_flat_array_oop(obj, tmp, *slow_path->entry());
+  }
 }
 #undef __

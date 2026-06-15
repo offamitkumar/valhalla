@@ -356,6 +356,11 @@ inline frame frame::sender(RegisterMap* map) const {
 inline frame frame::sender_for_compiled_frame(RegisterMap *map) const {
   assert(map != nullptr, "map must be set");
 
+  nmethod* nm = _cb->as_nmethod_or_null();
+  if (nm != nullptr && nm->method()->has_scalarized_args()) {
+    fatal("implement function frame::sender_for_compiled_frame");
+  }
+
   intptr_t* sender_sp = this->sender_sp();
   address   sender_pc = this->sender_pc();
 

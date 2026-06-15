@@ -27,6 +27,7 @@
 #include "gc/shared/barrierSet.hpp"
 #include "gc/shared/barrierSetAssembler.hpp"
 #include "gc/shared/barrierSetNMethod.hpp"
+#include "gc/shared/barrierSetRuntime.hpp"
 #include "interpreter/interp_masm.hpp"
 #include "oops/compressedOops.hpp"
 #include "runtime/jniHandles.hpp"
@@ -105,6 +106,15 @@ void BarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet decorators
   }
   default: Unimplemented();
   }
+}
+
+// Generic implementation. GCs can provide an optimized one.
+void BarrierSetAssembler::flat_field_copy(MacroAssembler* masm, DecoratorSet decorators,
+                                          Register src, Register dst, Register inline_layout_info) {
+  if (decorators & IS_DEST_UNINITIALIZED) {
+    __ stop("implement function BarrierSetAssembler::flat_field_copy");
+  }
+  __ stop("implement function BarrierSetAssembler::flat_field_copy #2");
 }
 
 // Generic implementation. GCs can provide an optimized one.
@@ -195,6 +205,44 @@ void BarrierSetAssembler::nmethod_entry_barrier(MacroAssembler* masm) {
 
     // Fall through to method body.
   __ block_comment("} nmethod_entry_barrier (nmethod_entry_barrier)");
+}
+
+void BarrierSetAssembler::c2i_entry_barrier(MacroAssembler *masm, Register tmp1, Register tmp2, Register tmp3) {
+  assert_different_registers(tmp1, tmp2, tmp3);
+
+  __ block_comment("c2i_entry_barrier (c2i_entry_barrier) {");
+
+  if (UseNewCode) {
+    __ untested("test this method");
+  }
+  Register tmp1_class_loader_data = tmp1;
+
+  Label bad_call, skip_barrier;
+
+  // Fast path: If no method is given, the call is definitely bad.
+  __ compareU64_and_branch(Z_method, (intptr_t)0, Assembler::bcondEqual, bad_call);
+
+  // Load class loader data to determine whether the method's holder is concurrently unloading.
+  __ load_method_holder(tmp1, Z_method);
+  __ z_lg(tmp1_class_loader_data, Address(tmp1, InstanceKlass::class_loader_data_offset()));
+
+  // Fast path: If class loader is strong, the holder cannot be unloaded.
+  __ z_llgf(tmp2, Address(tmp1_class_loader_data, ClassLoaderData::keep_alive_ref_count_offset()));
+  __ compareU64_and_branch(tmp2, (intptr_t)0, Assembler::bcondNotEqual, skip_barrier);
+
+  // Class loader is weak. Determine whether the holder is still alive.
+  __ z_lg(tmp2, Address(tmp1_class_loader_data, ClassLoaderData::holder_offset()));
+  __ resolve_oop_handle(tmp2, tmp1, tmp3);
+  __ compareU64_and_branch(tmp2, (intptr_t)0, Assembler::bcondNotEqual, skip_barrier);
+
+  __ bind(bad_call);
+
+  __ load_const_optimized(tmp1, SharedRuntime::get_handle_wrong_method_stub());
+  __ z_br(tmp1);
+
+  __ bind(skip_barrier);
+
+  __ block_comment("} c2i_entry_barrier (c2i_entry_barrier)");
 }
 
 #ifdef COMPILER2
