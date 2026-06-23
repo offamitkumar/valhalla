@@ -125,7 +125,7 @@ LoadFlattenedArrayStub::LoadFlattenedArrayStub(LIR_Opr array, LIR_Opr index, LIR
   _array = array;
   _index = index;
   _result = result;
-  _scratch_reg = FrameMap::Z_R1_oop_opr;
+  _scratch_reg = FrameMap::Z_R2_oop_opr;
   _info = new CodeEmitInfo(info);
 }
 
@@ -150,7 +150,7 @@ StoreFlattenedArrayStub::StoreFlattenedArrayStub(LIR_Opr array, LIR_Opr index, L
   _array = array;
   _index = index;
   _value = value;
-  _scratch_reg = FrameMap::Z_R1_oop_opr;
+  _scratch_reg = FrameMap::Z_R2_oop_opr;
   _info = new CodeEmitInfo(info);
 }
 
@@ -172,7 +172,7 @@ void StoreFlattenedArrayStub::emit_code(LIR_Assembler* ce) {
 SubstitutabilityCheckStub::SubstitutabilityCheckStub(LIR_Opr left, LIR_Opr right, CodeEmitInfo* info) {
   _left = left;
   _right = right;
-  _scratch_reg = FrameMap::Z_R1_oop_opr;
+  _scratch_reg = FrameMap::Z_R2_oop_opr;
   _info = new CodeEmitInfo(info);
 }
 
@@ -296,12 +296,12 @@ void NewObjectArrayStub::emit_code(LIR_Assembler* ce) {
 void MonitorEnterStub::emit_code(LIR_Assembler* ce) {
   __ bind(_entry);
   if (_throw_ie_stub != nullptr) {
-    __ untested("MonitorEnterStub::emit_code");
     // When we come here, _obj_reg has already been checked to be non-null.
+    Register scratch = _scratch_reg->as_register();
     __ z_lg(Z_R1_scratch, oopDesc::mark_offset_in_bytes(), _obj_reg->as_register());
     __ load_const_optimized(Z_R0_scratch, markWord::inline_type_pattern);
-    __ z_ngr(Z_R1_scratch, Z_R0_scratch);
-    __ z_cg(Z_R1_scratch, Address(Z_R0_scratch));
+    __ z_nill(scratch, markWord::inline_type_pattern);
+    __ z_cghi(scratch, markWord::inline_type_pattern);
     __ branch_optimized(Assembler::bcondEqual, *_throw_ie_stub->entry());
   }
   StubId enter_id;

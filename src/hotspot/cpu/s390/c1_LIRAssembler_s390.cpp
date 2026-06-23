@@ -892,7 +892,6 @@ Address LIR_Assembler::as_Address_lo(LIR_Address* addr) {
 }
 
 void LIR_Assembler::move(LIR_Opr src, LIR_Opr dst) {
-  assert(false, "untested");
   assert(dst->is_cpu_register(), "must be");
   assert(dst->type() == src->type(), "must be");
 
@@ -3111,7 +3110,10 @@ int LIR_Assembler::store_inline_type_fields_to_buf(ciInlineKlass* vk) {
 }
 
 void LIR_Assembler::emit_opFlattenedArrayCheck(LIR_OpFlattenedArrayCheck* op) {
-  __ stop("implement function LIR_Assembler::emit_opFlattenedArrayCheck");
+  // We are loading/storing from/to an array that *may* be a flat array (the
+  // declared type is Object[], abstract[], interface[] or VT.ref[]).
+  // If this array is a flat array, take the slow path.
+  __ test_flat_array_oop(op->array()->as_register(), op->tmp()->as_register(), *op->stub()->entry());
 }
 
 void LIR_Assembler::emit_opNullFreeArrayCheck(LIR_OpNullFreeArrayCheck* op) {
@@ -3128,7 +3130,66 @@ void LIR_Assembler::emit_opNullFreeArrayCheck(LIR_OpNullFreeArrayCheck* op) {
 }
 
 void LIR_Assembler::emit_opSubstitutabilityCheck(LIR_OpSubstitutabilityCheck* op) {
-  __ stop("implement function LIR_Assembler::emit_opSubstitutabilityCheck");
+  Label L_oops_equal;
+  Label L_oops_not_equal;
+  Label L_end;
+
+  Register left  = op->left()->as_register();
+  Register right = op->right()->as_register();
+
+  __ compare64_and_branch(left, right, Assembler::bcondEqual, L_oops_equal);
+
+  // (1) Null check -- if one of the operands is null, the other must not be null (because
+  //     the two references are not equal), so they are not substitutable,
+  __ compare64_and_branch(left, (intptr_t)0, Assembler::bcondEqual, L_oops_not_equal);
+  __ compare64_and_branch(right, (intptr_t)0, Assembler::bcondEqual, L_oops_not_equal);
+
+  ciKlass* left_klass = op->left_klass();
+  ciKlass* right_klass = op->right_klass();
+
+  // (2) Inline type check -- if either of the operands is not an inline type,
+  //     they are not substitutable. We do this only if we are not sure that the
+  //     operands are inline type
+  if ((left_klass == nullptr || right_klass == nullptr) ||// The klass is still unloaded, or came from a Phi node.
+      !left_klass->is_inlinetype() || !right_klass->is_inlinetype()) {
+    Register tmp = op->tmp1()->as_register();
+    __ z_lg(tmp, oopDesc::mark_offset_in_bytes(), left);
+    __ z_lg(Z_R0_scratch, oopDesc::mark_offset_in_bytes(), right);
+    __ z_nill(tmp, (intptr_t)markWord::inline_type_pattern);
+    __ z_nr(tmp, Z_R0_scratch);
+    __ compare64_and_branch(tmp, (intptr_t)markWord::inline_type_pattern, Assembler::bcondNotEqual, L_oops_not_equal);
+  }
+
+  // (3) Same klass check: if the operands are of different klasses, they are not substitutable.
+  if (left_klass != nullptr && left_klass->is_inlinetype() && left_klass == right_klass) {
+    // No need to load klass -- the operands are statically known to be the same inline klass.
+    __ branch_optimized(Assembler::bcondAlways, *op->stub()->entry());
+  } else {
+    Register tmp1 = op->tmp1()->as_register();
+    Register tmp2 = op->tmp2()->as_register();
+    if (left == right) { // same operand, so clearly the same klasses, let's save the check
+      __ branch_optimized(Assembler::bcondAlways, *op->stub()->entry());  //  -> do slow check
+    } else {
+      __ cmp_klasses_from_objects(left, right, tmp1, tmp2);
+      __ branch_optimized(Assembler::bcondEqual, *op->stub()->entry()); // same klass -> do slow check
+    }
+    // fall through to L_oops_not_equal
+  }
+
+  __ bind(L_oops_not_equal);
+  move(op->not_equal_result(), op->result_opr());
+  __ branch_optimized(Assembler::bcondAlways, L_end);
+
+  // We've returned from the stub. Z_R2 (stub's _scratch_reg) contains 0x0 IFF the two
+  // operands are not substitutable. (Don't compare against 0x1 in case the
+  // C compiler is naughty)
+  __ bind(*op->stub()->continuation());
+  __ compare64_and_branch(Z_R2, (intptr_t)0, Assembler::bcondEqual, L_oops_not_equal);
+
+  __ bind(L_oops_equal);
+  move(op->equal_result(), op->result_opr()); // (call_stub() != 0x0) -> equal
+  // fall-through
+  __ bind(L_end);
 }
 
 void LIR_Assembler::arraycopy_inlinetype_check(Register obj, Register tmp, CodeStub* slow_path, bool is_dest, bool null_check) {
