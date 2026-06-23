@@ -1206,8 +1206,6 @@ static void gen_c2i_adapter(MacroAssembler *masm,
 
       if (!r_1->is_valid()) {
         assert(!r_2->is_valid(), "");
-        st_off -= wordSize;
-        next_arg_int++;
         continue;
       }
 
@@ -2658,9 +2656,24 @@ void SharedRuntime::gen_i2c_adapter(MacroAssembler *masm,
   __ z_br(Z_R1_scratch);
 }
 
-__attribute__((unused)) static void gen_inline_cache_check(MacroAssembler *masm, Label& skip_fixup) {
-  (void)skip_fixup;
-  __ stop("implement gen_inline_cache_check");
+static void gen_inline_cache_check(MacroAssembler *masm, Label& skip_fixup) {
+  Register data = Z_inline_cache;  // Z_R9 contains the CompiledICData pointer
+
+  // Perform the inline cache check
+  __ ic_check(CodeEntryAlignment);
+
+  // Load the speculated method from CompiledICData
+  __ z_lg(Z_method, Address(data, CompiledICData::speculated_method_offset()));
+
+  // Method might have been compiled since the call site was patched to
+  // interpreted; if that is the case treat it as a miss so we can get
+  // the call site corrected.
+  __ z_ltg(Z_R0_scratch, Address(Z_method, Method::code_offset()));
+  __ z_bre(skip_fixup);
+
+  // Jump to IC miss handler
+  __ load_const(Z_R1_scratch, AddressLiteral(SharedRuntime::get_ic_miss_stub()));
+  __ z_br(Z_R1_scratch);
 }
 
 void SharedRuntime::generate_i2c2i_adapters(MacroAssembler* masm,
