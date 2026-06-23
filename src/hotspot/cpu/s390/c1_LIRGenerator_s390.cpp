@@ -778,17 +778,12 @@ void LIRGenerator::do_NewInstance(NewInstance* x) {
   const LIR_Opr reg = result_register_for (x->type());
 
   CodeEmitInfo* info = state_for(x, x->needs_state_before() ? x->state_before() : x->state());
+  LIR_Opr klass_reg = FrameMap::Z_R11_metadata_opr;
   LIR_Opr tmp1 = FrameMap::Z_R12_oop_opr;
   LIR_Opr tmp2 = FrameMap::Z_R13_oop_opr;
   LIR_Opr tmp3 = reg;
   LIR_Opr tmp4 = LIR_OprFact::illegalOpr;
-  LIR_Opr klass_reg = FrameMap::Z_R11_metadata_opr;
-  bool allow_inline = !x->is_unresolved() && x->klass()->is_inlinetype();
-  if (allow_inline) {
-    assert(false, "untested: inline type allocation");
-  }
-  new_instance(reg, x->klass(), x->is_unresolved(),
-               allow_inline,
+  new_instance(reg, x->klass(), x->is_unresolved(), !x->is_unresolved() && x->klass()->is_inlinetype(),
                tmp1, tmp2, tmp3, tmp4, klass_reg, info);
   LIR_Opr result = rlock_result(x);
   __ move(reg, result);

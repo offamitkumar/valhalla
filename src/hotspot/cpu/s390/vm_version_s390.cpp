@@ -339,27 +339,21 @@ void VM_Version::initialize() {
   }
   // TODO: Valhalla optimizations
   if (UseArrayFlattening) {
-    warning("UseArrayFlattening not supported on this CPU.");
     FLAG_SET_DEFAULT(UseArrayFlattening, false);
   }
   if (UseFieldFlattening) {
-    warning("UseFieldFlattening not supported on this CPU.");
     FLAG_SET_DEFAULT(UseFieldFlattening, false);
   }
   if (UseNullFreeNonAtomicValueFlattening) {
-    warning("UseNullFreeNonAtomicValueFlattening not supported on this CPU.");
     FLAG_SET_DEFAULT(UseNullFreeNonAtomicValueFlattening, false);
   }
   if (UseNullableAtomicValueFlattening) {
-    warning("UseNullableAtomicValueFlattening not supported on this CPU.");
     FLAG_SET_DEFAULT(UseNullableAtomicValueFlattening, false);
   }
   if (UseNullFreeAtomicValueFlattening) {
-    warning("UseNullFreeAtomicValueFlattening not supported on this CPU.");
     FLAG_SET_DEFAULT(UseNullFreeAtomicValueFlattening, false);
   }
   if (UseNullableNonAtomicValueFlattening) {
-    warning("UseNullableNonAtomicValueFlattening not supported on this CPU.");
     FLAG_SET_DEFAULT(UseNullableNonAtomicValueFlattening, false);
   }
 }
