@@ -87,6 +87,7 @@ void BarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet decorators
   case T_OBJECT: {
     if (UseCompressedOops && in_heap) {
       if (val == noreg) {
+        assert(!not_null, "inconsistent access");
         __ clear_mem(addr, 4);
       } else if (CompressedOops::mode() == CompressedOops::UnscaledNarrowOop) {
         __ z_st(val, addr);
@@ -97,6 +98,7 @@ void BarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet decorators
       }
     } else {
       if (val == noreg) {
+        assert(!not_null, "inconsistent access");
         __ clear_mem(addr, 8);
       } else {
         __ z_stg(val, addr);
@@ -111,10 +113,15 @@ void BarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet decorators
 // Generic implementation. GCs can provide an optimized one.
 void BarrierSetAssembler::flat_field_copy(MacroAssembler* masm, DecoratorSet decorators,
                                           Register src, Register dst, Register inline_layout_info) {
+  // flat_field_copy implementation is fairly complex, and there are not any
+  // "short-cuts" to be made from asm. What there is, appears to have the same
+  // cost in C++, so just "call_VM_leaf" for now rather than maintain hundreds
+  // of hand-rolled instructions...
   if (decorators & IS_DEST_UNINITIALIZED) {
-    __ stop("implement function BarrierSetAssembler::flat_field_copy");
+    __ call_VM_leaf(CAST_FROM_FN_PTR(address, BarrierSetRuntime::value_copy_is_dest_uninitialized), src, dst, inline_layout_info);
+  } else {
+    __ call_VM_leaf(CAST_FROM_FN_PTR(address, BarrierSetRuntime::value_copy), src, dst, inline_layout_info);
   }
-  __ stop("implement function BarrierSetAssembler::flat_field_copy #2");
 }
 
 // Generic implementation. GCs can provide an optimized one.
