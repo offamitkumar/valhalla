@@ -1032,7 +1032,6 @@ void LIRGenerator::do_If (If* x) {
   }
 
   if (x->substitutability_check()) {
-    assert(false, "untested: substitutability check in do_If");
     substitutability_check(x, *xin, *yin);
   } else {
     __ cmp(lir_cond(cond), left, right);
