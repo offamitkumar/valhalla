@@ -3061,7 +3061,26 @@ void LIR_Assembler::emit_profile_type(LIR_OpProfileType* op) {
 }
 
 void LIR_Assembler::emit_profile_inline_type(LIR_OpProfileInlineType* op) {
-  __ stop("implement function LIR_Assembler::emit_profile_inline_type");
+  Register obj = op->obj()->as_register();
+  Register tmp = op->tmp()->as_pointer_register();
+  LIR_Address* mdo_addr = op->mdp()->as_address_ptr();
+  assert(!mdo_addr->index()->is_valid(), "index unsupported");
+  Register mdo_base = mdo_addr->base()->as_pointer_register();
+  int mdo_offs = mdo_addr->disp();
+  bool not_null = op->not_null();
+  int flag = op->flag();
+
+  Label not_inline_type;
+  __ test_oop_is_not_inline_type(obj, tmp, not_inline_type, !not_null);
+
+  // Load current byte value from MDO
+  __ z_llgc(Z_R0_scratch, mdo_offs, mdo_base);
+  // OR with flag
+  __ z_oill(Z_R0_scratch, flag);
+  // Store back
+  __ z_stc(Z_R0_scratch, mdo_offs, mdo_base);
+
+  __ bind(not_inline_type);
 }
 
 void LIR_Assembler::emit_updatecrc32(LIR_OpUpdateCRC32* op) {

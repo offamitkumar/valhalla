@@ -843,6 +843,9 @@ static bool uses_implicit_null_check(void* address);
 // markWord tests, kills markWord reg
 void test_markword_is_inline_type(Register markword, Label& is_inline_type);
 
+// inlineKlass queries, kills temp_reg
+void test_oop_is_not_inline_type(Register object, Register tmp, Label& not_inline_type, bool can_be_null = true);
+
 
   // Valhalla support for inline types
   void test_field_is_null_free_inline_type(Register flags, Register temp_reg, Label& is_null_free);

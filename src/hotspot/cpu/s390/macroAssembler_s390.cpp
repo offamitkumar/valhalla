@@ -3919,6 +3919,21 @@ void MacroAssembler::test_markword_is_inline_type(Register markword, Label& is_i
   z_bre(is_inline_type);
 }
 
+void MacroAssembler::test_oop_is_not_inline_type(Register object, Register tmp, Label& not_inline_type, bool can_be_null) {
+  if (can_be_null) {
+    z_ltgr(object, object);
+    z_bre(not_inline_type);
+  }
+  // Load mark word from object
+  z_lg(tmp, oopDesc::mark_offset_in_bytes(), object);
+  // AND with inline type pattern mask
+  z_nilf(tmp, markWord::inline_type_pattern_mask);
+  // Compare with inline type pattern
+  z_chi(tmp, markWord::inline_type_pattern);
+  // Branch if not equal (i.e., not an inline type)
+  z_brne(not_inline_type);
+}
+
 void MacroAssembler::test_field_is_null_free_inline_type(Register flags, Register temp_reg, Label& is_null_free) {
   testbit(flags, ResolvedFieldEntry::is_null_free_inline_type_shift);
   z_brc(Assembler::bcondNotZero, is_null_free);
