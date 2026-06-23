@@ -534,9 +534,9 @@ OopMapSet* Runtime1::generate_code_for(StubId id, StubAssembler* sasm) {
         OopMap* map = save_live_registers(sasm);
 
         // Called with store_parameter and not C abi
-        int arg_offset = FrameMap::first_available_sp_in_frame;
-        __ z_lg(Z_ARG2, arg_offset + 1 * BytesPerWord, Z_SP); // left
-        __ z_lg(Z_ARG3, arg_offset + 0 * BytesPerWord, Z_SP); // right
+        const int frame_size = sasm->frame_size() * VMRegImpl::slots_per_word * VMRegImpl::stack_slot_size;
+        __ z_lg(Z_ARG2, 1 * BytesPerWord + FrameMap::first_available_sp_in_frame + frame_size, Z_SP); // left
+        __ z_lg(Z_ARG3, 0 * BytesPerWord + FrameMap::first_available_sp_in_frame + frame_size, Z_SP); // right
         int call_offset = __ call_RT(noreg, noreg, CAST_FROM_FN_PTR(address, substitutability_check), Z_ARG2, Z_ARG3);
 
         oop_maps = new OopMapSet();
