@@ -3113,8 +3113,6 @@ void LIR_Assembler::emit_opSubstitutabilityCheck(LIR_OpSubstitutabilityCheck* op
 }
 
 void LIR_Assembler::arraycopy_inlinetype_check(Register obj, Register tmp, CodeStub* slow_path, bool is_dest, bool null_check) {
-  __ untested("arraycopy_inlinetype_check");
-  
   if (null_check) {
     __ compare64_and_branch(obj, (intptr_t)0, Assembler::bcondEqual, *slow_path->entry());
   }
