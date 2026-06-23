@@ -1132,6 +1132,8 @@ void test_markword_is_inline_type(Register markword, Label& is_inline_type);
   void load_on_condition_imm_32(Register dst, int64_t i2, branch_condition cc);
   void load_on_condition_imm_64(Register dst, int64_t i2, branch_condition cc);
 
+  void profile_receiver_type(Register recv, Register mdp, int mdp_offset, Register tmp1);
+
   // Inline type specific methods
   #include "asm/macroAssembler_common.hpp"
 };
