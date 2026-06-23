@@ -178,7 +178,6 @@ SubstitutabilityCheckStub::SubstitutabilityCheckStub(LIR_Opr left, LIR_Opr right
 
 void SubstitutabilityCheckStub::emit_code(LIR_Assembler* ce) {
   __ bind(_entry);
-  __ untested("SubstitutabilityCheckStub::emit_code");
   ce->store_parameter(_left->as_register(), 1);
   ce->store_parameter(_right->as_register(), 0);
   __ load_const_optimized(Z_R1_scratch, Runtime1::entry_for(StubId::c1_substitutability_check_id));

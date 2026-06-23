@@ -530,7 +530,6 @@ OopMapSet* Runtime1::generate_code_for(StubId id, StubAssembler* sasm) {
 
     case StubId::c1_substitutability_check_id:
       {
-        __ untested("c1_substitutability_check");
         __ set_info("substitutability_check", dont_gc_arguments);
         OopMap* map = save_live_registers(sasm);
 
