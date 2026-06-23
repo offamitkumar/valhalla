@@ -855,6 +855,7 @@ void test_markword_is_inline_type(Register markword, Label& is_inline_type);
   void decode_klass_not_null(Register dst);
   void load_klass(Register klass, Address mem);
   void load_klass(Register klass, Register src_oop);
+  void load_prototype_header(Register dst, Register src);
   void store_klass(Register klass, Register dst_oop, Register ck = noreg); // Klass will get compressed if ck not provided.
   void store_klass_gap(Register s, Register dst_oop);
   void load_narrow_klass_compact(Register dst, Register src);

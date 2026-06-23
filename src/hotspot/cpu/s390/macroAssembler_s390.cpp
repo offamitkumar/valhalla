@@ -4205,6 +4205,11 @@ void MacroAssembler::load_klass(Register klass, Register src_oop) {
   }
 }
 
+void MacroAssembler::load_prototype_header(Register dst, Register src) {
+  load_klass(dst, src);
+  z_lg(dst, Address(dst, Klass::prototype_header_offset()));
+}
+
 void MacroAssembler::store_klass(Register klass, Register dst_oop, Register ck) {
   assert(!UseCompactObjectHeaders, "Don't use with compact headers");
   assert_different_registers(dst_oop, klass, Z_R0);
