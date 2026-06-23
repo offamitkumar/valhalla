@@ -1000,7 +1000,7 @@ static void patch_callers_callsite(MacroAssembler *masm, int adapter_size, int t
   // compiled code exists.
   const Register return_pc = Z_R1_scratch;
   const Register tmp       = Z_R0_scratch;
-  
+
   __ z_lgr(return_pc, Z_R14);
   __ z_stg(return_pc, _z_abi(return_pc), Z_SP);
   RegisterSaver::push_frame_and_save_argument_registers(masm, tmp, adapter_size, total_args_passed, regs);
@@ -1069,7 +1069,7 @@ static void gen_c2i_adapter(MacroAssembler *masm,
                             int& frame_complete,
                             int& frame_size_in_words,
                             bool alloc_inline_receiver) {
-  
+
   // Add crash point at the start for debugging/testing
   if (UseNewCode) {
     __ stop("DEBUG: gen_c2i_adapter entry point");
@@ -1136,48 +1136,60 @@ static void gen_c2i_adapter(MacroAssembler *masm,
       // compiled code so we may not have buffers to back the value
       // objects. Allocate the buffers here with a runtime call.
       OopMap* map = RegisterSaver::save_live_registers(masm, RegisterSaver::all_registers);
-      
+
       frame_complete = __ offset();
-      
+
       __ set_last_Java_frame(/*sp=*/Z_SP, /*pc=*/noreg);
-      
+
       __ z_lgr(Z_ARG1, Z_thread);
       __ z_lgr(Z_ARG2, Z_method);
       __ load_const_optimized(Z_ARG3, (intptr_t)alloc_inline_receiver);
       __ call_VM_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::allocate_inline_types), Z_ARG1, Z_ARG2, Z_ARG3);
-      
+
       oop_maps->add_gc_map(__ offset(), map);
       __ reset_last_Java_frame();
-      
+
       RegisterSaver::restore_live_registers(masm, RegisterSaver::all_registers);
-      
+
       Label no_exception;
       __ load_and_test_long(tmp1, Address(Z_thread, Thread::pending_exception_offset()));
       __ z_bre(no_exception);
-      
+
       __ clear_mem(Address(Z_thread, JavaThread::vm_result_oop_offset()), sizeof(oop));
       __ z_lg(Z_R2, Address(Z_thread, Thread::pending_exception_offset()));
       __ load_const_optimized(Z_R1_scratch, StubRoutines::forward_exception_entry());
       __ z_br(Z_R1_scratch);
-      
+
       __ bind(no_exception);
-      
+
       // We get an array of objects from the runtime call
       __ z_lg(buf_array, Address(Z_thread, JavaThread::vm_result_oop_offset()));
     }
   }
 
-  int extraspace = total_args_passed * Interpreter::stackElementSize;
+  // Since all args are passed on the stack, total_args_passed*wordSize is the
+  // space we need. We need ABI scratch area but we use the caller's since
+  // it has already been allocated.
+  const int abi_scratch = frame::z_top_ijava_frame_abi_size;
+  int extraspace = align_up(total_args_passed, 2) * wordSize + abi_scratch;
+  Register sender_SP = Z_R10;
 
-  // Stack is aligned, keep it that way
-  extraspace = align_up(extraspace, StackAlignmentInBytes);
+  // Remember the senderSP so we can pop the interpreter arguments off of the stack.
+  // In addition, template interpreter expects initial_caller_sp in Z_R10.
+  __ z_lgr(sender_SP, Z_SP);
 
-  // Set sender SP
-  __ z_lgr(Z_R11, Z_SP);
+  // This should always fit in 14 bit immediate.
+  __ resize_frame(-extraspace, Z_R0_scratch);
 
-  if (extraspace > 0) {
-    __ add2reg(Z_SP, -extraspace);
-  }
+  // Reuse Z_R11 for temporary sender SP reference in the loop
+  Register loop_sender_SP = Z_R11;
+  __ z_lgr(loop_sender_SP, sender_SP);
+
+  // We use the caller's ABI scratch area (out_preserved_stack_slots) for the initial
+  // args. This essentially moves the callers ABI scratch area from the top to the
+  // bottom of the arg area.
+
+  int st_off = extraspace - wordSize;
 
   // Now write the args into the outgoing interpreter space
   for (int next_arg_comp = 0, ignored = 0, next_vt_arg = 0, next_arg_int = 0;
@@ -1185,47 +1197,70 @@ static void gen_c2i_adapter(MacroAssembler *masm,
     assert(ignored <= next_arg_comp, "shouldn't skip over more slots than there are arguments");
     assert(next_arg_int <= total_args_passed, "more arguments for the interpreter than expected?");
     BasicType bt = sig_extended->at(next_arg_comp)._bt;
-    int st_off = (total_args_passed - next_arg_int - 1) * Interpreter::stackElementSize;
-    
+
     if (!InlineTypePassFieldsAsArgs || bt != T_METADATA) {
-      int next_off = st_off - Interpreter::stackElementSize;
-      const int offset = (bt == T_LONG || bt == T_DOUBLE) ? next_off : st_off;
       const VMRegPair reg_pair = regs[next_arg_comp - ignored];
-      
+
       VMReg r_1 = reg_pair.first();
       VMReg r_2 = reg_pair.second();
-      
+
       if (!r_1->is_valid()) {
         assert(!r_2->is_valid(), "");
+        st_off -= wordSize;
         next_arg_int++;
         continue;
       }
-      
+
       if (r_1->is_stack()) {
-        // Load from input stack location
-        int ld_off = r_1->reg2stack() * VMRegImpl::stack_slot_size + extraspace;
+        // The calling convention produces OptoRegs that ignore the preserve area (abi scratch).
+        // We must account for it here.
+        int ld_off = (r_1->reg2stack() + SharedRuntime::out_preserve_stack_slots()) * VMRegImpl::stack_slot_size;
+
         if (!r_2->is_valid()) {
-          __ z_lgf(tmp1, Address(Z_R11, ld_off));
-          __ z_stg(tmp1, Address(Z_SP, offset));
+          __ z_mvc(Address(Z_SP, st_off), Address(loop_sender_SP, ld_off), sizeof(void*));
         } else {
-          __ z_lg(tmp1, Address(Z_R11, ld_off));
-          __ z_stg(tmp1, Address(Z_SP, offset));
+          // longs are given 2 64-bit slots in the interpreter,
+          // but the data is passed in only 1 slot.
+          if (bt == T_LONG || bt == T_DOUBLE) {
+#ifdef ASSERT
+            __ clear_mem(Address(Z_SP, st_off), sizeof(void *));
+#endif
+            st_off -= wordSize;
+          }
+          __ z_mvc(Address(Z_SP, st_off), Address(loop_sender_SP, ld_off), sizeof(void*));
         }
       } else if (r_1->is_Register()) {
         Register r = r_1->as_Register();
         if (!r_2->is_valid()) {
-          __ z_st(r, Address(Z_SP, offset));
+          __ z_st(r, st_off, Z_SP);
         } else {
-          __ z_stg(r, Address(Z_SP, offset));
+          // longs are given 2 64-bit slots in the interpreter, but the
+          // data is passed in only 1 slot.
+          if (bt == T_LONG || bt == T_DOUBLE) {
+#ifdef ASSERT
+            __ clear_mem(Address(Z_SP, st_off), sizeof(void *));
+#endif
+            st_off -= wordSize;
+          }
+          __ z_stg(r, st_off, Z_SP);
         }
       } else {
-        // Float register
+        assert(r_1->is_FloatRegister(), "");
         if (!r_2->is_valid()) {
-          __ z_ste(r_1->as_FloatRegister(), Address(Z_SP, offset));
+          __ z_ste(r_1->as_FloatRegister(), st_off, Z_SP);
         } else {
-          __ z_std(r_1->as_FloatRegister(), Address(Z_SP, offset));
+          // In 64bit, doubles are given 2 64-bit slots in the interpreter, but the
+          // data is passed in only 1 slot.
+          // One of these should get known junk...
+#ifdef ASSERT
+          __ z_lzdr(Z_F1);
+          __ z_std(Z_F1, st_off, Z_SP);
+#endif
+          st_off -= wordSize;
+          __ z_std(r_1->as_FloatRegister(), st_off, Z_SP);
         }
       }
+      st_off -= wordSize;
       next_arg_int++;
     } else {
       // Handle inline type arguments
@@ -1234,12 +1269,12 @@ static void gen_c2i_adapter(MacroAssembler *masm,
       int vt = 1;
       Label L_null;
       Label not_null_buffer;
-      
+
       do {
         next_arg_comp++;
         BasicType bt = sig_extended->at(next_arg_comp)._bt;
         BasicType prev_bt = sig_extended->at(next_arg_comp - 1)._bt;
-        
+
         if (bt == T_METADATA) {
           vt++;
           ignored++;
@@ -1249,13 +1284,13 @@ static void gen_c2i_adapter(MacroAssembler *masm,
         } else if (sig_extended->at(next_arg_comp)._vt_oop) {
           VMReg buffer = regs[next_arg_comp - ignored].first();
           if (buffer->is_stack()) {
-            int ld_off = buffer->reg2stack() * VMRegImpl::stack_slot_size + extraspace;
-            __ z_lg(buf_oop, Address(Z_R11, ld_off));
+            int ld_off = (buffer->reg2stack() + SharedRuntime::out_preserve_stack_slots()) * VMRegImpl::stack_slot_size;
+            __ z_lg(buf_oop, Address(loop_sender_SP, ld_off));
           } else {
             __ z_lgr(buf_oop, buffer->as_Register());
           }
           __ compare64_and_branch(buf_oop, (intptr_t)0, Assembler::bcondNotEqual, not_null_buffer);
-          
+
           // Get buffer from allocated pool
           int index = arrayOopDesc::base_offset_in_bytes(T_OBJECT) + next_vt_arg * type2aelembytes(T_OBJECT);
           __ z_lg(buf_oop, Address(buf_array, index));
@@ -1267,8 +1302,8 @@ static void gen_c2i_adapter(MacroAssembler *masm,
             VMReg reg = regs[next_arg_comp - ignored].first();
             Label L_notNull;
             if (reg->is_stack()) {
-              int ld_off = reg->reg2stack() * VMRegImpl::stack_slot_size + extraspace;
-              __ z_llgc(tmp1, Address(Z_R11, ld_off));
+              int ld_off = (reg->reg2stack() + SharedRuntime::out_preserve_stack_slots()) * VMRegImpl::stack_slot_size;
+              __ z_llgc(tmp1, Address(loop_sender_SP, ld_off));
               __ compare64_and_branch(tmp1, (intptr_t)0, Assembler::bcondNotEqual, L_notNull);
             } else {
               __ compare64_and_branch(reg->as_Register(), (intptr_t)0, Assembler::bcondNotEqual, L_notNull);
@@ -1279,18 +1314,18 @@ static void gen_c2i_adapter(MacroAssembler *masm,
             continue;
           }
           assert(off > 0, "offset in object should be positive");
-          
+
           // Copy field from buffer to stack
           VMReg r_1 = regs[next_arg_comp - ignored].first();
           VMReg r_2 = regs[next_arg_comp - ignored].second();
-          
+
           if (r_1->is_stack()) {
-            int ld_off = r_1->reg2stack() * VMRegImpl::stack_slot_size + extraspace;
+            int ld_off = (r_1->reg2stack() + SharedRuntime::out_preserve_stack_slots()) * VMRegImpl::stack_slot_size;
             if (!r_2->is_valid()) {
-              __ z_lgf(tmp1, Address(Z_R11, ld_off));
+              __ z_lgf(tmp1, Address(loop_sender_SP, ld_off));
               __ z_st(tmp1, Address(buf_oop, off));
             } else {
-              __ z_lg(tmp1, Address(Z_R11, ld_off));
+              __ z_lg(tmp1, Address(loop_sender_SP, ld_off));
               __ z_stg(tmp1, Address(buf_oop, off));
             }
           } else if (r_1->is_Register()) {
@@ -1309,21 +1344,19 @@ static void gen_c2i_adapter(MacroAssembler *masm,
           }
         }
       } while (vt != 0);
-      
+
       // Pass the buffer to the interpreter
       __ bind(not_null_buffer);
       __ z_stg(buf_oop, Address(Z_SP, st_off));
       __ bind(L_null);
+      st_off -= wordSize;
     }
   }
 
-  // TODO: enable again after loom integration 
-  // __ push_cont_fastpath(Z_thread);
+  // Jump to the interpreter just as if interpreter was doing it.
+  __ add2reg(Z_esp, st_off, Z_SP);
 
-  // Store the method for the interpreter
-  __ z_stg(Z_method, Address(Z_thread, JavaThread::callee_target_offset()));
-
-  // Jump to the interpreter entry point
+  // Frame_manager expects initial_caller_sp (= SP without resize by c2i) in Z_R10.
   __ z_lg(Z_R1_scratch, Address(Z_method, Method::interpreter_entry_offset()));
   __ z_br(Z_R1_scratch);
 }
