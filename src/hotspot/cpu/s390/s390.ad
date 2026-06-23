@@ -5314,7 +5314,7 @@ instruct castN2X(iRegL dst, iRegN src) %{
   format %{ "LGR     $dst,$src\t # CastN2X" %}
   ins_encode %{ __ lgr_if_needed($dst$$Register, $src$$Register); %}
   ins_pipe(pipe_class_dummy);
-}
+%}
 
 
 instruct stfSSD(stackSlotD stkSlot, regD src) %{
@@ -10210,7 +10210,7 @@ instruct inlineCallClearArrayWordCopy(iRegL cnt, iRegP_N2P base, iRegL val, Univ
   format %{ "ClearArrayWordCopy $cnt,$base,$val" %}
   ins_encode %{ __ fill_words($base$$Register, $cnt$$Register, $val$$Register); %}
   ins_pipe(pipe_class_dummy);
-}
+%}
 
 
 // ============================================================================
