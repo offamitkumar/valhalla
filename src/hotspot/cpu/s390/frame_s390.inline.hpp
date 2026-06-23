@@ -378,7 +378,7 @@ inline frame frame::sender_for_compiled_frame(RegisterMap *map) const {
     if (!_cb->is_nmethod()) { // compiled frames do not use callee-saved registers
       map->set_include_argument_oops(_cb->caller_must_gc_arguments(map->thread()));
       if (oop_map() != nullptr) {
-        _cb->oop_maps()->update_register_map(this, map);
+        OopMapSet::update_register_map(this, map);
       }
     } else {
       if (_cb->oop_maps() != nullptr) {
