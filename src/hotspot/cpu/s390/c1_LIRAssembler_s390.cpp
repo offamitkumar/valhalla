@@ -3078,7 +3078,7 @@ void LIR_Assembler::emit_profile_inline_type(LIR_OpProfileInlineType* op) {
   // OR with flag
   __ z_oill(Z_R0_scratch, flag);
   // Store back
-  __ z_stc(Z_R0_scratch, Address(mdo_base, mdo_offs));
+  __ z_stcy(Z_R0_scratch, Address(mdo_base, mdo_offs));
 
   __ bind(not_inline_type);
 }
