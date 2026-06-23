@@ -1582,7 +1582,8 @@ void InterpreterMacroAssembler::profile_multiple_element_types(Register element,
     load_klass(tmp2, element);
 
     // Record the object type.
-    record_klass_in_profile(tmp2, tmp1, tmp3);
+    profile_obj_type(element, Address(tmp1, in_bytes(ArrayStoreData::array_offset())), tmp2);
+    // record_klass_in_profile(tmp2, tmp1, tmp3);
 
     bind(done);
 
