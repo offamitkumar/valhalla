@@ -481,6 +481,7 @@ OopMapSet* Runtime1::generate_code_for(StubId id, StubAssembler* sasm) {
         restore_live_registers(sasm);
         __ z_lgr(Z_R1_scratch, Z_R14);
         __ verify_oop(Z_R1_scratch);  // Z_R1_scratch: an array of buffered value objects
+        __ z_br(Z_R14);
       }
       break;
 
@@ -506,6 +507,7 @@ OopMapSet* Runtime1::generate_code_for(StubId id, StubAssembler* sasm) {
 
         // Z_R2: loaded element at array[index]
         __ verify_oop(Z_R2);
+        __ z_br(Z_R14);
       }
       break;
 
@@ -525,6 +527,7 @@ OopMapSet* Runtime1::generate_code_for(StubId id, StubAssembler* sasm) {
         oop_maps = new OopMapSet();
         oop_maps->add_gc_map(call_offset, map);
         restore_live_registers_except_r2(sasm);
+        __ z_br(Z_R14);
       }
       break;
 
@@ -541,7 +544,10 @@ OopMapSet* Runtime1::generate_code_for(StubId id, StubAssembler* sasm) {
 
         oop_maps = new OopMapSet();
         oop_maps->add_gc_map(call_offset, map);
+
         restore_live_registers_except_r2(sasm);
+
+        __ z_br(Z_R14);
 
         // Z_R2: are the two operands substitutable
       }

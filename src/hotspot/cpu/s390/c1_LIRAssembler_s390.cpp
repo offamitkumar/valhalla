@@ -3152,12 +3152,14 @@ void LIR_Assembler::emit_opSubstitutabilityCheck(LIR_OpSubstitutabilityCheck* op
   //     operands are inline type
   if ((left_klass == nullptr || right_klass == nullptr) ||// The klass is still unloaded, or came from a Phi node.
       !left_klass->is_inlinetype() || !right_klass->is_inlinetype()) {
+    static_assert((markWord::inline_type_pattern & ~0xffff) == 0,
+              "inline_type_pattern must fit in 16-bit immediate of z_llill/z_cghi");
     Register tmp = op->tmp1()->as_register();
-    __ z_lg(tmp, oopDesc::mark_offset_in_bytes(), left);
-    __ z_lg(Z_R0_scratch, oopDesc::mark_offset_in_bytes(), right);
-    __ z_nill(tmp, (intptr_t)markWord::inline_type_pattern);
-    __ z_nr(tmp, Z_R0_scratch);
-    __ compare64_and_branch(tmp, (intptr_t)markWord::inline_type_pattern, Assembler::bcondNotEqual, L_oops_not_equal);
+    __ z_llill(tmp, (intptr_t)markWord::inline_type_pattern);
+    __ z_ng(tmp, Address(left,  oopDesc::mark_offset_in_bytes()));
+    __ z_ng(tmp, Address(right, oopDesc::mark_offset_in_bytes()));
+    __ z_cghi(tmp, (intptr_t)markWord::inline_type_pattern);
+    __ branch_optimized(Assembler::bcondNotEqual, L_oops_not_equal);
   }
 
   // (3) Same klass check: if the operands are of different klasses, they are not substitutable.
