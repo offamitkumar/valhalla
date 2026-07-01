@@ -1246,6 +1246,7 @@ void InterpreterMacroAssembler::profile_acmp(Register mdp,
                                              Register tmp) {
   // TODO: untested(profile_acmp)
   if (ProfileInterpreter) {
+    assert_different_registers(mdp, left, right, tmp);
     Label profile_continue;
 
     // If no method data exists, go to profile_continue.

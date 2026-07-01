@@ -2110,7 +2110,7 @@ void TemplateTable::if_acmp(Condition cc) {
   // when invoke_is_substitutable is called later
   __ pop_ptr(Z_ARG5);
 
-  __ profile_acmp(Z_tos, Z_tos, Z_ARG5, Z_ARG3);
+  __ profile_acmp(Z_tmp_1, Z_ARG5, Z_tos, Z_tmp_2);
 
   const int is_inline_type_mask = markWord::inline_type_pattern;
   if (Arguments::is_valhalla_enabled()) {
