@@ -1089,7 +1089,7 @@ static void gen_c2i_adapter(MacroAssembler *masm,
 
     Register klass = Z_R1_scratch;
     __ load_method_holder(klass, Z_method);
-    __ clinit_barrier(klass, Z_R1_scratch, &L_skip_barrier);
+    __ clinit_barrier(klass, Z_thread, &L_skip_barrier);
     __ load_const_optimized(klass, SharedRuntime::get_handle_wrong_method_stub());
     __ z_br(klass);
 

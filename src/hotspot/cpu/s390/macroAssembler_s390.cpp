@@ -3904,33 +3904,24 @@ void MacroAssembler::null_check(Register reg, Register tmp, int64_t offset) {
 //-------------------------------------
 
 void MacroAssembler::test_markword_is_inline_type(Register markword, Label& is_inline_type) {
-  // TODO: untested test_markword_is_inline_type()
-  STATIC_ASSERT(markWord::inline_type_pattern_mask <= 0xFFFF);
-  STATIC_ASSERT(markWord::inline_type_pattern <= 0x7FFF);
-  
-  const uint16_t mask = markWord::inline_type_pattern_mask;
-  const int16_t pattern = markWord::inline_type_pattern;
-
-  // AND markword with mask (mask is 0x83, fits in 16 bits)
-  z_nill(markword, mask);
-  
-  // Compare with pattern (pattern is 0x81, fits in signed 16-bit immediate)
-  z_cghi(markword, pattern);
-  z_bre(is_inline_type);
+  // TODO: can we do better ?
+  assert_different_registers(markword, Z_R0);
+  load_const_optimized(Z_R0, (long)markWord::inline_type_pattern_mask);
+  z_ngr(markword, Z_R0);
+  z_cghi(markword, markWord::inline_type_pattern);
 }
 
 void MacroAssembler::test_oop_is_not_inline_type(Register object, Register tmp, Label& not_inline_type, bool can_be_null) {
+  assert_different_registers(tmp, Z_R0);
   if (can_be_null) {
     z_ltgr(object, object);
     z_bre(not_inline_type);
   }
-  // Load mark word from object
+  const int is_inline_type_mask = markWord::inline_type_pattern;
   z_lg(tmp, oopDesc::mark_offset_in_bytes(), object);
-  // AND with inline type pattern mask
-  z_nilf(tmp, markWord::inline_type_pattern_mask);
-  // Compare with inline type pattern
-  z_chi(tmp, markWord::inline_type_pattern);
-  // Branch if not equal (i.e., not an inline type)
+  load_const_optimized(Z_R0, (long)is_inline_type_mask);
+  z_ngr(tmp, Z_R0);
+  z_cghi(tmp, is_inline_type_mask);
   z_brne(not_inline_type);
 }
 
@@ -4965,6 +4956,7 @@ void MacroAssembler::fill_words(Register base, Register cnt, Register value) {
   BLOCK_COMMENT("fill_words {");
 
   // 2x unrolled loop
+  stop("crash right here");
   z_srlg(Z_R0, cnt, 1);  // cnt / 2
   z_bre(loop_end);       // if zero, skip to loop_end
 

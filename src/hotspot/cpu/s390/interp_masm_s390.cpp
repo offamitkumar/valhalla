@@ -1581,7 +1581,12 @@ void InterpreterMacroAssembler::profile_multiple_element_types(Register element,
     bind(update);
     load_klass(tmp2, element);
 
-    // Record the object type.
+    // Record the stored value's klass into the ReceiverTypeData cells.
+    // ArrayStoreData extends ReceiverTypeData, so offset 0 from MDP is the
+    // ReceiverTypeData base — the (Klass*, count) pairs for the stored value's type.
+    // This matches what x86/aarch64/ppc/riscv do via profile_receiver_type(..., offset=0).
+    // TODO: implement profile_receiver_type for s390 to get multi-receiver type tracking;
+    // for now profile_obj_type correctly targets the right slot.
     profile_obj_type(element, Address(tmp1, in_bytes(ArrayStoreData::array_offset())), tmp2);
     // record_klass_in_profile(tmp2, tmp1, tmp3);
 
