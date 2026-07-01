@@ -3765,9 +3765,77 @@ const uint SharedRuntime::java_return_convention_max_int = Argument::n_int_regis
 const uint SharedRuntime::java_return_convention_max_float = Argument::n_float_register_parameters_j;
 
 int SharedRuntime::java_return_convention(const BasicType *sig_bt, VMRegPair *regs, int total_args_passed) {
-  Unimplemented();
-  ShouldNotReachHere();
-  return 0;
+  // Map return value fields to registers using the same register set as
+  // java_calling_convention.  On s390, Z_R2 (Z_ARG1) is the primary integer
+  // return register and Z_F0 (Z_FARG1) is the primary float return register,
+  // so forward ordering naturally puts the first return slot in the return reg.
+  static const Register INT_ArgReg[java_return_convention_max_int] = {
+    Z_ARG1, Z_ARG2, Z_ARG3, Z_ARG4, Z_ARG5  // Z_R2 .. Z_R6
+  };
+  static const FloatRegister FP_ArgReg[java_return_convention_max_float] = {
+    Z_FARG1, Z_FARG2, Z_FARG3, Z_FARG4       // Z_F0, Z_F2, Z_F4, Z_F6
+  };
+
+  uint int_args = 0;
+  uint fp_args  = 0;
+
+  for (int i = 0; i < total_args_passed; i++) {
+    switch (sig_bt[i]) {
+    case T_BOOLEAN:
+    case T_CHAR:
+    case T_BYTE:
+    case T_SHORT:
+    case T_INT:
+      if (int_args < java_return_convention_max_int) {
+        regs[i].set1(INT_ArgReg[int_args]->as_VMReg());
+        int_args++;
+      } else {
+        return -1;
+      }
+      break;
+    case T_VOID:
+      // Second half of T_LONG or T_DOUBLE.
+      assert(i != 0 && (sig_bt[i - 1] == T_LONG || sig_bt[i - 1] == T_DOUBLE), "expecting half");
+      regs[i].set_bad();
+      break;
+    case T_LONG:
+      assert((i + 1) < total_args_passed && sig_bt[i + 1] == T_VOID, "expecting half");
+      // fall through
+    case T_OBJECT:
+    case T_ARRAY:
+    case T_ADDRESS:
+    case T_METADATA:
+      if (int_args < java_return_convention_max_int) {
+        regs[i].set2(INT_ArgReg[int_args]->as_VMReg());
+        int_args++;
+      } else {
+        return -1;
+      }
+      break;
+    case T_FLOAT:
+      if (fp_args < java_return_convention_max_float) {
+        regs[i].set1(FP_ArgReg[fp_args]->as_VMReg());
+        fp_args++;
+      } else {
+        return -1;
+      }
+      break;
+    case T_DOUBLE:
+      assert((i + 1) < total_args_passed && sig_bt[i + 1] == T_VOID, "expecting half");
+      if (fp_args < java_return_convention_max_float) {
+        regs[i].set2(FP_ArgReg[fp_args]->as_VMReg());
+        fp_args++;
+      } else {
+        return -1;
+      }
+      break;
+    default:
+      ShouldNotReachHere();
+      break;
+    }
+  }
+
+  return int_args + fp_args;
 }
 
 BufferedInlineTypeBlob* SharedRuntime::generate_buffered_inline_type_adapter(const InlineKlass* vk) {
