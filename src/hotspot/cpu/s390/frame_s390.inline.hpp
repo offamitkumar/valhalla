@@ -378,12 +378,12 @@ inline frame frame::sender_for_compiled_frame(RegisterMap *map) const {
     if (!_cb->is_nmethod()) { // compiled frames do not use callee-saved registers
       map->set_include_argument_oops(_cb->caller_must_gc_arguments(map->thread()));
       if (oop_map() != nullptr) {
-        OopMapSet::update_register_map(this, map);
+        _oop_map->update_register_map(this, map);
       }
     } else {
-      if (_cb->oop_maps() != nullptr) {
-        OopMapSet::update_register_map(this, map);
-      }
+      assert(!_cb->caller_must_gc_arguments(map->thread()), "");
+      assert(!map->include_argument_oops(), "");
+      assert(oop_map() == nullptr || !oop_map()->has_any(OopMapValue::callee_saved_value), "callee-saved value in compiled frame");
     }
   }
 
