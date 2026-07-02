@@ -10201,17 +10201,17 @@ instruct inlineCallClearArray(iRegL cnt, iRegP_N2P base, immL_0 zero, Universe d
   ins_encode %{ __ Clear_Array($cnt$$Register, $base$$Register, $tmpL$$Register); %}
   ins_pipe(pipe_class_dummy);
 %}
+
 // Clear-array with dynamic array length and non-zero value.
 instruct inlineCallClearArrayWordCopy(iRegL cnt, iRegP_N2P base, iRegL val, Universe dummy, allRoddRegL tmpL, flagsReg cr) %{
   predicate(((ClearArrayNode*)n)->word_copy_only());
   match(Set dummy (ClearArray (Binary cnt base) val));
-  effect(TEMP tmpL, KILL cr);
+  effect(TEMP tmpL, USE_KILL base, KILL cr);
   ins_cost(400);
   format %{ "ClearArrayWordCopy $cnt,$base,$val" %}
-  ins_encode %{ __ fill_words($base$$Register, $cnt$$Register, $val$$Register); %}
+  ins_encode %{ __ fill_words($base$$Register, $cnt$$Register, $val$$Register, $tmpL$$Register); %}
   ins_pipe(pipe_class_dummy);
 %}
-
 
 // ============================================================================
 // CompactStrings

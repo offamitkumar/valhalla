@@ -4949,23 +4949,23 @@ unsigned int MacroAssembler::Clear_Array_Const_Big(long cnt, Register base_point
   int block_end = offset();
   return block_end - block_start;
 }
-// Fill words with a non-zero value
-void MacroAssembler::fill_words(Register base, Register cnt, Register value) {
+
+// Fill words with a non-zero value.
+void MacroAssembler::fill_words(Register base, Register cnt, Register value, Register tmp) {
   Label loop, loop_end, done;
 
   BLOCK_COMMENT("fill_words {");
 
   // 2x unrolled loop
-  z_srlg(Z_R0, cnt, 1);  // cnt / 2; z_srlg does not set CC
-  z_ltgr(Z_R0, Z_R0);    // set CC based on result
-  z_bre(loop_end);        // if zero, skip to loop_end
+  z_srag(tmp, cnt, 1);    // tmp = cnt / 2
+  z_bre(loop_end);         // skip pair loop if cnt < 2
 
   // Loop for pairs of words
   bind(loop);
   z_stg(value, 0, base);
   z_stg(value, 8, base);
   z_aghi(base, 16);
-  z_brctg(Z_R0, loop);    // 64-bit decrement-and-branch
+  z_brctg(tmp, loop);      // 64-bit decrement-and-branch
 
   bind(loop_end);
   // Handle remaining single word if cnt is odd
@@ -4976,7 +4976,6 @@ void MacroAssembler::fill_words(Register base, Register cnt, Register value) {
   bind(done);
   BLOCK_COMMENT("} fill_words");
 }
-
 
 // Allocator.
 unsigned int MacroAssembler::CopyRawMemory_AlignedDisjoint(Register src_reg, Register dst_reg,
