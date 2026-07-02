@@ -430,8 +430,12 @@ void G1BarrierSetAssembler::oop_store_at(MacroAssembler* masm, DecoratorSet deco
   bool in_heap = (decorators & IN_HEAP) != 0;
   bool as_normal = (decorators & AS_NORMAL) != 0;
   bool dest_uninitialized = (decorators & IS_DEST_UNINITIALIZED) != 0;
+
   bool needs_pre_barrier = as_normal && !dest_uninitialized;
   bool needs_post_barrier = (val != noreg && in_heap);
+
+  assert_different_registers(val, tmp1, tmp2, tmp3);
+
   bool is_array = (decorators & IS_ARRAY) != 0;
   bool on_anonymous = (decorators & ON_UNKNOWN_OOP_REF) != 0;
   bool precise = is_array || on_anonymous;

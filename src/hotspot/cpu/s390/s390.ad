@@ -2953,6 +2953,15 @@ operand immI_1() %{
   interface(CONST_INTER);
 %}
 
+// Integer Immediate: the value 4.
+operand immI_4() %{
+  predicate(n->get_int() == 4);
+  match(ConI);
+  op_cost(1);
+  format %{ %}
+  interface(CONST_INTER);
+%}
+
 // Integer Immediate: the value 16.
 operand immI_16() %{
   predicate(n->get_int() == 16);

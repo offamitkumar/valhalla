@@ -73,6 +73,127 @@ static void write_barrier_post(MacroAssembler* masm,
 
 %} // source
 
+
+// TODO 8350865 (same applies to g1StoreLSpecialTwoOops)
+// - Do not set/overwrite barrier data here, also handle G1C2BarrierPostNotNull
+
+instruct g1StoreLSpecialOneOopOff0(indirect mem, iRegL src, immI_0 off, iRegL tmp1, iRegL tmp2, iRegL tmp3, flagsReg cr) %{
+  predicate(UseG1GC);
+  match(Set mem (StoreLSpecial mem (Binary src off)));
+  effect(TEMP tmp1, TEMP tmp2, TEMP tmp3, KILL cr);
+  ins_cost(MEMORY_REF_COST);
+  format %{ "STG     $src,$mem\t # g1StoreLSpecialOneOopOff0" %}
+  ins_encode %{
+    __ block_comment("g1StoreLSpecialOneOopOff0 {");
+    ((MachNode*)this)->set_barrier_data(G1C2BarrierPre | G1C2BarrierPost);
+
+    write_barrier_pre(masm, this,
+                      $mem$$Register  /* obj     */,
+                      $tmp1$$Register /* pre_val */,
+                      $tmp2$$Register /* tmp1    */,
+                      RegSet::of($mem$$Register, $src$$Register) /* preserve */);
+
+    __ z_stg($src$$Register, Address($mem$$Register));
+
+    // S390 is big-endian: offset 0 holds the upper 32 bits (bits 63:32) of the long.
+    // Shift right by 32 to bring upper 32 bits into the lower word position.
+    __ z_srlg($tmp1$$Register, $src$$Register, 32);
+    __ oop_decoder($tmp1$$Register, $tmp1$$Register, true /* maybe_null */);
+    write_barrier_post(masm, this,
+                       $mem$$Register  /* store_addr */,
+                       $tmp1$$Register /* new_val    */,
+                       $tmp2$$Register /* tmp1       */,
+                       $tmp3$$Register /* tmp2       */);
+    __ block_comment("} g1StoreLSpecialOneOopOff0");
+  %}
+  ins_pipe(pipe_class_dummy);
+%}
+
+instruct g1StoreLSpecialOneOopOff4(indirect mem, iRegL src, immI_4 off, iRegL tmp1, iRegL tmp2, iRegL tmp3, iRegL tmp4, flagsReg cr) %{
+  predicate(UseG1GC);
+  match(Set mem (StoreLSpecial mem (Binary src off)));
+  effect(TEMP tmp1, TEMP tmp2, TEMP tmp3, TEMP tmp4, KILL cr);
+  ins_cost(MEMORY_REF_COST);
+  format %{ "STG     $src,$mem\t # g1StoreLSpecialOneOopOff4" %}
+  ins_encode %{
+    __ block_comment("g1StoreLSpecialOneOopOff4 {");
+    ((MachNode*)this)->set_barrier_data(G1C2BarrierPre | G1C2BarrierPost);
+
+    // Adjust address to point to narrow oop (at offset 4)
+    __ z_lgr($tmp4$$Register, $mem$$Register);
+    __ z_aghi($tmp4$$Register, 4);
+    write_barrier_pre(masm, this,
+                      $tmp4$$Register /* obj     */,
+                      $tmp1$$Register /* pre_val */,
+                      $tmp2$$Register /* tmp1    */,
+                      RegSet::of($mem$$Register, $src$$Register, $tmp4$$Register) /* preserve */);
+
+    __ z_stg($src$$Register, Address($mem$$Register));
+
+    // S390 is big-endian: offset 4 holds the lower 32 bits (bits 31:0) of the long.
+    // Zero-extend the lower 32 bits to extract the narrow oop field value.
+    __ z_llgfr($tmp1$$Register, $src$$Register);
+    __ oop_decoder($tmp1$$Register, $tmp1$$Register, true /* maybe_null */);
+    write_barrier_post(masm, this,
+                       $tmp4$$Register /* store_addr */,
+                       $tmp1$$Register /* new_val    */,
+                       $tmp2$$Register /* tmp1       */,
+                       $tmp3$$Register /* tmp2       */);
+    __ block_comment("} g1StoreLSpecialOneOopOff4");
+  %}
+  ins_pipe(pipe_class_dummy);
+%}
+
+instruct g1StoreLSpecialTwoOops(indirect mem, iRegL src, iRegL tmp1, iRegL tmp2, iRegL tmp3, iRegL tmp4, flagsReg cr) %{
+  predicate(UseG1GC);
+  match(Set mem (StoreLSpecial mem src));
+  effect(TEMP tmp1, TEMP tmp2, TEMP tmp3, TEMP tmp4, KILL cr);
+  ins_cost(MEMORY_REF_COST);
+  format %{ "STG     $src,$mem\t # g1StoreLSpecialTwoOops" %}
+  ins_encode %{
+    __ block_comment("g1StoreLSpecialTwoOops {");
+    ((MachNode*)this)->set_barrier_data(G1C2BarrierPre | G1C2BarrierPost);
+
+    write_barrier_pre(masm, this,
+                      $mem$$Register  /* obj     */,
+                      $tmp1$$Register /* pre_val */,
+                      $tmp2$$Register /* tmp1    */,
+                      RegSet::of($mem$$Register, $src$$Register) /* preserve */);
+    // Adjust address to point to the second narrow oop in the long value
+    __ z_lgr($tmp4$$Register, $mem$$Register);
+    __ z_aghi($tmp4$$Register, 4);
+    write_barrier_pre(masm, this,
+                      $tmp4$$Register /* obj     */,
+                      $tmp1$$Register /* pre_val */,
+                      $tmp2$$Register /* tmp1    */,
+                      RegSet::of($mem$$Register, $src$$Register, $tmp4$$Register) /* preserve */);
+
+    __ z_stg($src$$Register, Address($mem$$Register));
+
+    // S390 is big-endian: offset 0 holds the upper 32 bits (bits 63:32).
+    // Shift right by 32 to bring upper 32 bits into the lower word position.
+    __ z_srlg($tmp1$$Register, $src$$Register, 32);
+    __ oop_decoder($tmp1$$Register, $tmp1$$Register, true /* maybe_null */);
+    write_barrier_post(masm, this,
+                       $mem$$Register  /* store_addr */,
+                       $tmp1$$Register /* new_val    */,
+                       $tmp2$$Register /* tmp1       */,
+                       $tmp3$$Register /* tmp2       */);
+
+    // S390 is big-endian: offset 4 holds the lower 32 bits (bits 31:0).
+    // Zero-extend the lower 32 bits to extract the second narrow oop field value.
+    __ z_llgfr($tmp1$$Register, $src$$Register);
+    __ oop_decoder($tmp1$$Register, $tmp1$$Register, true /* maybe_null */);
+    write_barrier_post(masm, this,
+                       $tmp4$$Register /* store_addr */,
+                       $tmp1$$Register /* new_val    */,
+                       $tmp2$$Register /* tmp1       */,
+                       $tmp3$$Register /* tmp2       */);
+    __ block_comment("} g1StoreLSpecialTwoOops");
+  %}
+  ins_pipe(pipe_class_dummy);
+%}
+
 // store pointer
 instruct g1StoreP(indirect dst, memoryRegP src, iRegL tmp1, iRegL tmp2, flagsReg cr) %{
   predicate(UseG1GC && n->as_Store()->barrier_data() != 0);
