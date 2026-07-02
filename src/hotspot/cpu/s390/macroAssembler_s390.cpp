@@ -4956,16 +4956,16 @@ void MacroAssembler::fill_words(Register base, Register cnt, Register value) {
   BLOCK_COMMENT("fill_words {");
 
   // 2x unrolled loop
-  stop("crash right here");
-  z_srlg(Z_R0, cnt, 1);  // cnt / 2
-  z_bre(loop_end);       // if zero, skip to loop_end
+  z_srlg(Z_R0, cnt, 1);  // cnt / 2; z_srlg does not set CC
+  z_ltgr(Z_R0, Z_R0);    // set CC based on result
+  z_bre(loop_end);        // if zero, skip to loop_end
 
   // Loop for pairs of words
   bind(loop);
   z_stg(value, 0, base);
   z_stg(value, 8, base);
   z_aghi(base, 16);
-  z_brct(Z_R0, loop);
+  z_brctg(Z_R0, loop);    // 64-bit decrement-and-branch
 
   bind(loop_end);
   // Handle remaining single word if cnt is odd
