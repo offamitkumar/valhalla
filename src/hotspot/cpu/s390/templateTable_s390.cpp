@@ -871,7 +871,7 @@ void TemplateTable::aaload() {
   Register index = Z_tos;
   index_check(Z_tmp_1, index, shift);
   // __ untested("aaload");
-  __ profile_array_type<ArrayLoadData>(/*array=*/Z_tmp_1, Z_tmp_2, Z_tmp_3);
+  __ profile_array_type<ArrayLoadData>(/*array=*/Z_tmp_1, Z_tmp_2, Z_ARG2);
 
   if (UseArrayFlattening) {
     __ stop("implement function TemplateTable::aaload");
@@ -881,7 +881,7 @@ void TemplateTable::aaload() {
                 Z_tmp_2, Z_tmp_3, IS_ARRAY);
     __ verify_oop(Z_tos);
   }
-  __ profile_element_type(Z_tos, Z_tmp_2, Z_tmp_3);
+  __ profile_element_type(Z_tos, Z_tmp_2, Z_ARG2);
 }
 
 void TemplateTable::baload() {
