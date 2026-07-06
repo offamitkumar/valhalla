@@ -642,7 +642,6 @@ OopMapSet* Runtime1::generate_code_for(StubId id, StubAssembler* sasm) {
 
     case StubId::c1_throw_identity_exception_id:
       {
-        __ untested("c1_throw_identity_exception");
         __ set_info("throw_identity_exception", dont_gc_arguments);
         oop_maps = generate_exception_throw(sasm, CAST_FROM_FN_PTR(address, throw_identity_exception), true);
       }
