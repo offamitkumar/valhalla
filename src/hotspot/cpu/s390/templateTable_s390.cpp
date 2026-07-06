@@ -238,11 +238,6 @@ void TemplateTable::patch_bytecode(Bytecodes::Code bc,
 
   switch (bc) {
     case Bytecodes::_fast_vputfield:
-      {
-        // Debug stop for _fast_vputfield to diagnose patching issues
-        __ stop("patch_bytecode: _fast_vputfield case");
-      }
-      break;
     case Bytecodes::_fast_aputfield:
     case Bytecodes::_fast_bputfield:
     case Bytecodes::_fast_zputfield:
@@ -2122,13 +2117,11 @@ void TemplateTable::if_acmp(Condition cc) {
     __ z_ltgr(Z_ARG5, Z_ARG5);
     __ z_brc(Assembler::bcondEqual, (cc == equal) ? not_taken : taken);
 
-    __ z_lg(Z_ARG3, Address(Z_tos, oopDesc::mark_offset_in_bytes()));
-    __ z_nill(Z_ARG3, is_inline_type_mask);
-    __ z_lg(Z_ARG4, Address(Z_ARG5, oopDesc::mark_offset_in_bytes()));
-    __ z_nill(Z_ARG4, is_inline_type_mask);
-    __ z_ngr(Z_ARG3, Z_ARG4);
+    __ z_llill(Z_ARG3, is_inline_type_mask);
+    __ z_ng(Z_ARG3, Address(Z_tos, oopDesc::mark_offset_in_bytes()));
+    __ z_ng(Z_ARG3, Address(Z_ARG5, oopDesc::mark_offset_in_bytes()));
     __ z_chi(Z_ARG3, is_inline_type_mask);
-    __ z_brc(Assembler::bcondNotEqual, (cc == equal) ? not_taken : taken);
+    __ branch_optimized(Assembler::bcondNotEqual, (cc == equal) ? not_taken : taken);
 
     __ load_klass(Z_ARG3, Z_tos);
     __ load_klass(Z_ARG4, Z_ARG5);
@@ -3324,20 +3317,22 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static, RewriteContr
       __ pop(atos);
       if (is_static) {
         Label is_nullable;
-        __ testbit(flags, ResolvedFieldEntry::is_null_free_inline_type_shift);
-        __ z_brz(is_nullable);
+        __ z_lgr(Z_R0, Z_R10);
+        __ z_nill(Z_R0, 1 << ResolvedFieldEntry::is_null_free_inline_type_shift);
+        __ branch_optimized(Assembler::bcondZero, is_nullable);
         __ null_check(Z_tos);  // FIXME JDK-8341120
         __ bind(is_nullable);
         // Note: fieldAddr already contains the complete address (obj + offset), look at the start of method
         do_oop_store(_masm, field, Z_tos,
                      oopStore_tmp1, oopStore_tmp2, oopStore_tmp3, IN_HEAP);
       } else {
-        // __ untested("not yet tested");
+        __ z_lgr(Z_R0, flags);
         Label null_free_reference, is_flat, rewrite_inline, done_valhalla;
-        __ testbit(flags, ResolvedFieldEntry::is_flat_shift);
-        __ z_brc(Assembler::bcondNotZero, is_flat);
-        __ testbit(flags, ResolvedFieldEntry::is_null_free_inline_type_shift);
-        __ z_brc(Assembler::bcondNotZero, null_free_reference);
+        __ z_nill(Z_R0, 1 << ResolvedFieldEntry::is_flat_shift);
+        __ branch_optimized(Assembler::bcondNotZero, is_flat);
+        __ z_lgr(Z_R0, flags);
+        __ z_nill(Z_R0, 1 << ResolvedFieldEntry::is_null_free_inline_type_shift);
+        __ branch_optimized(Assembler::bcondNotZero, null_free_reference);
         pop_and_check_object(obj);
         __ z_agr(fieldAddr, obj);
         // Store into the field
@@ -3361,7 +3356,6 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static, RewriteContr
         __ write_flat_field(cache, off, oopStore_tmp2, flags, oopStore_tmp1);
         __ bind(rewrite_inline);
         if (do_rewrite) {
-          __ stop("trying to patch bytecode fast_vputfield");
           patch_bytecode(Bytecodes::_fast_vputfield, bc_reg, patch_tmp, true, byte_no);
         }
         __ bind(done_valhalla);
@@ -3406,10 +3400,6 @@ void TemplateTable::putstatic(int byte_no) {
 // gc will find oops there and update.
 void TemplateTable::jvmti_post_fast_field_mod() {
 
-  if (bytecode() == Bytecodes::_fast_vputfield) {
-    __ stop("implement function TemplateTable::jvmti_post_fast_field_mod");
-  }
-
   if (!JvmtiExport::can_post_field_modification()) {
     return;
   }
@@ -3435,10 +3425,6 @@ void TemplateTable::jvmti_post_fast_field_mod() {
   // jvalue object.
   switch (bytecode()) {          // Load values into the jvalue object.
     case Bytecodes::_fast_vputfield: // fall through
-      {
-        // Debug stop for _fast_vputfield to diagnose patching issues
-        __ stop("jvmti_post_fast_field_mod: _fast_vputfield case");
-      }
     case Bytecodes::_fast_aputfield:
       __ push_ptr(Z_tos);
       break;
@@ -3478,10 +3464,6 @@ void TemplateTable::jvmti_post_fast_field_mod() {
 
   switch (bytecode()) {             // Restore tos values.
     case Bytecodes::_fast_vputfield: // fall through
-      {
-        // Debug stop for _fast_vputfield to diagnose patching issues
-        __ stop("jvmti_post_fast_field_mod: _fast_vputfield case - 1");
-      }
     case Bytecodes::_fast_aputfield:
       __ pop_ptr(Z_tos);
       break;
@@ -3512,10 +3494,6 @@ void TemplateTable::jvmti_post_fast_field_mod() {
 void TemplateTable::fast_storefield(TosState state) {
   transition(state, vtos);
 
-  if (bytecode() == Bytecodes::_fast_vputfield) {
-    __ stop("implement function TemplateTable::fast_storefield");
-  }
-
   jvmti_post_fast_field_mod();
 
   // Access constant pool cache.
@@ -3540,7 +3518,18 @@ void TemplateTable::fast_storefield(TosState state) {
   switch (bytecode()) {
     case Bytecodes::_fast_vputfield:
       {
-        __ unimplemented("fast_vputfield");
+        Label is_flat, done;
+        __ z_lgr(Z_R0, flags);
+        __ z_nill(Z_R0, 1 << ResolvedFieldEntry::is_flat_shift);
+        __ branch_optimized(Assembler::bcondNotZero, is_flat);
+        __ null_check(obj);
+        do_oop_store(_masm, field, Z_tos,
+                     Z_ARG2, Z_ARG3, Z_ARG4, IN_HEAP);
+        __ branch_optimized(Assembler::bcondAlways, done);
+        __ bind(is_flat);
+        // TODO: confirm the registers R3 and R4 foesn't contain live values
+        __ write_flat_field(cache, Z_ARG2, Z_ARG3, noreg, Z_tos);
+        __ bind(done);
       }
     break;
     case Bytecodes::_fast_aputfield:
