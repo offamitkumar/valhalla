@@ -2113,8 +2113,8 @@ void TemplateTable::if_acmp(Condition cc) {
     __ z_chi(Z_ARG3, markWord::inline_type_pattern);
     __ branch_optimized(Assembler::bcondNotEqual, (cc == equal) ? not_taken : taken);
 
-    __ load_klass(Z_ARG3, Z_tos);
-    __ load_klass(Z_ARG4, Z_ARG5);
+    __ load_metadata(Z_ARG3, Z_tos);
+    __ load_metadata(Z_ARG4, Z_ARG5);
     __ compareU64_and_branch(Z_ARG3, Z_ARG4, Assembler::bcondNotEqual, (cc == equal) ? not_taken : taken);
 
     if (cc == equal) {

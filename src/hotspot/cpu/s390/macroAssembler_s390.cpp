@@ -4231,7 +4231,6 @@ void MacroAssembler::load_klass(Register klass, Register src_oop) {
 }
 
 void MacroAssembler::load_metadata(Register dst, Register src) {
-  untested("load_metadata");
   if (UseCompactObjectHeaders) {
     load_narrow_klass_compact(dst, src);
   } else {
