@@ -4581,15 +4581,17 @@ void MacroAssembler::flat_field_copy(DecoratorSet decorators, Register src, Regi
 }
 
 void MacroAssembler::payload_offset(Register inline_klass, Register offset) {
-  untested("payload_offset");
   z_lg(offset, Address(inline_klass, InlineKlass::adr_members_offset()));
-  z_lgf(offset, Address(offset, InlineKlass::payload_offset_offset()));
+  z_llgf(offset, Address(offset, InlineKlass::payload_offset_offset()));
 }
 
 void MacroAssembler::payload_addr(Register oop, Register data, Register inline_klass) {
-  untested("payload_addr");
   // ((address) (void*) o) + vk->payload_offset();
-  Register offset = (data == oop) ? Z_R0_scratch : data;
+  //
+  // oop must differ from inline_klass: payload_offset() overwrites inline_klass
+  // with the payload offset integer before we add it back to oop.
+  assert_different_registers(oop, inline_klass);
+  Register offset = (data == oop) ? Z_R1_scratch : data;
   payload_offset(inline_klass, offset);
   if (data == oop) {
     z_agr(data, offset);
