@@ -341,9 +341,6 @@ void VM_Version::initialize() {
   if (UseArrayFlattening) {
     FLAG_SET_DEFAULT(UseArrayFlattening, false);
   }
-  if (UseFieldFlattening) {
-    FLAG_SET_DEFAULT(UseFieldFlattening, false);
-  }
 }
 
 
