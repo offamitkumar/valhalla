@@ -2699,13 +2699,21 @@ void TemplateTable::getfield_or_static(int byte_no, bool is_static, RewriteContr
   const Register off           = Z_tmp_2;
   const Register cache         = Z_tmp_1;
   const Register index         = Z_tmp_2;
-  const Register flags         = Z_R1_scratch; // flags are not used in getfield
+  const Register flags         = Z_R1_scratch; // flags are not used in non-atos BTB entries
   const Register br_tab        = Z_R1_scratch;
   const Register tos_state     = Z_ARG4;
   const Register bc_reg        = Z_tmp_1;
   const Register patch_tmp     = Z_ARG4;
   const Register oopLoad_tmp1  = Z_R1_scratch;
   const Register oopLoad_tmp2  = Z_ARG5;
+  // In the Valhalla atosHandler, flags (Z_R1_scratch) and cache (Z_tmp_1) are both
+  // clobbered before we arrive there: Z_R1_scratch by br_tab dispatch and oopLoad_tmp1
+  // uses in every BTB entry; Z_tmp_1 by pop_and_check_object which overwrites cache
+  // with obj.  We reload both via load_field_entry inside atosHandler using Z_ARG4 and
+  // Z_ARG5, which are dead at the point of the z_bru(atosHandler) branch.
+  const Register atos_entry    = Z_ARG5;   // ResolvedFieldEntry* reloaded in atosHandler
+  const Register atos_index    = Z_ARG4;   // scratch for load_field_entry
+  const Register atos_flags    = Z_ARG4;   // reused to hold reloaded flags byte after entry load
 #ifdef ASSERT
   const Register br_tab_temp   = Z_R0_scratch;  // for branch table verification code only
 #endif
@@ -2716,7 +2724,8 @@ void TemplateTable::getfield_or_static(int byte_no, bool is_static, RewriteContr
   //  cache, index          : short-lived. Their life ends after load_resolved_field_entry.
   //  obj (overwrites cache): long-lived. Used in branch table entries.
   //  off (overwrites index): long-lived. Used in branch table entries.
-  //  flags                 : unused in getfield.
+  //  flags (Z_R1_scratch)  : valid after load_resolved_field_entry but clobbered by
+  //                          br_tab dispatch — not usable in atosHandler. Reload there.
   //  br_tab                : short-lived. Only used to address branch table, and for verification in BTB_BEGIN macro.
   //  tos_state             : short-lived. Only used to index the branch table entry.
   //  bc_reg                : short-lived. Used as work register in patch_bytecode.
@@ -2922,8 +2931,15 @@ void TemplateTable::getfield_or_static(int byte_no, bool is_static, RewriteContr
         __ load_heap_oop(Z_tos, field, oopLoad_tmp1, oopLoad_tmp2);
         __ push(atos);
       } else {
+        // Both flags (Z_R1_scratch) and cache (Z_tmp_1 == obj) are clobbered by the
+        // time we reach here.  Reload the ResolvedFieldEntry pointer fresh.
+        // atos_entry (Z_ARG5) and atos_index (Z_ARG4) are dead at this point.
+        __ load_field_entry(atos_entry, atos_index);
+        // Read the 1-byte flags field into atos_flags (Z_ARG4); atos_entry (Z_ARG5)
+        // still holds the ResolvedFieldEntry* for read_flat_field below.
+        __ load_sized_value(atos_flags, Address(atos_entry, in_bytes(ResolvedFieldEntry::flags_offset())), sizeof(u1), false);
         Label is_flat;
-        __ test_field_is_flat(flags, is_flat);
+        __ test_field_is_flat(atos_flags, is_flat);
         __ load_heap_oop(Z_tos, field, oopLoad_tmp1, oopLoad_tmp2);
         __ push(atos);
         if (do_rewrite) {
@@ -2931,9 +2947,10 @@ void TemplateTable::getfield_or_static(int byte_no, bool is_static, RewriteContr
         }
         __ z_bru(Done);
         __ bind(is_flat);
-        // field is flat (null-free or nullable with a null-marker)
+        // field is flat (null-free or nullable with a null-marker).
+        // atos_entry (Z_ARG5) still holds the ResolvedFieldEntry* here.
         __ z_lgr(Z_tos, obj);
-        __ read_flat_field(cache, Z_tos);
+        __ read_flat_field(atos_entry, Z_tos);
         __ verify_oop(Z_tos);
         __ push(atos);
         if (do_rewrite) {
