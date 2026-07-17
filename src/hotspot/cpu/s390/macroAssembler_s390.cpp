@@ -4298,7 +4298,6 @@ void MacroAssembler::test_flat_array_layout(Register lh, Label& is_flat_array) {
 }
 
 void MacroAssembler::inline_layout_info(Register holder_klass, Register index, Register layout_info) {
-  untested("inline_layout_info");
   assert_different_registers(holder_klass, index, layout_info);
   z_lg(layout_info, Address(holder_klass, InstanceKlass::inline_layout_info_array_offset()));
 #ifdef ASSERT
@@ -4565,7 +4564,6 @@ void MacroAssembler::store_heap_oop(Register Roop, const Address &a,
 
 void MacroAssembler::flat_field_copy(DecoratorSet decorators, Register src, Register dst,
                                      Register inline_layout_info) {
-  untested("flat_field_copy");
   BarrierSetAssembler* bs = BarrierSet::barrier_set()->barrier_set_assembler();
   bs->flat_field_copy(this, decorators, src, dst, inline_layout_info);
 }

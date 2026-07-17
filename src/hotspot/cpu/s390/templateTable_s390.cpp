@@ -3320,7 +3320,7 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static, RewriteContr
       __ pop(atos);
       if (is_static) {
         Label is_nullable;
-        __ z_lgr(Z_R0, Z_R10);
+        __ z_lgr(Z_R0, flags);
         __ z_nill(Z_R0, 1 << ResolvedFieldEntry::is_null_free_inline_type_shift);
         __ branch_optimized(Assembler::bcondZero, is_nullable);
         __ null_check(Z_tos);  // FIXME JDK-8341120
@@ -3356,8 +3356,18 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static, RewriteContr
         __ z_bru(rewrite_inline);
         __ bind(is_flat);
         pop_and_check_object(oopStore_tmp1);
-        __ write_flat_field(cache, off, oopStore_tmp2, flags, oopStore_tmp1);
-        __ bind(rewrite_inline);
+        {
+          // cache (Z_ARG5) is dead here — overwritten by load_resolved_field_entry.
+          // tos_state (Z_ARG4) is dead here — its life ended after branch-table dispatch.
+          // Reload the ResolvedFieldEntry pointer into tos_state (Z_ARG4); use
+          // oopStore_tmp2 (Z_R1_scratch) as the index scratch.
+          // Pass oopStore_tmp3 (Z_ARG2) as tmp2 so that flags (Z_tmp_1) is not
+          // clobbered; flags must survive to the volatility check after Done.
+          Register flat_entry = tos_state;
+          Register flat_index = oopStore_tmp2; // Z_R1_scratch (index scratch, discarded after load)
+          __ load_field_entry(flat_entry, flat_index);
+          __ write_flat_field(flat_entry, off, flat_index, oopStore_tmp3, oopStore_tmp1);
+        }__ bind(rewrite_inline);
         if (do_rewrite) {
           patch_bytecode(Bytecodes::_fast_vputfield, bc_reg, patch_tmp, true, byte_no);
         }
@@ -4177,16 +4187,13 @@ void TemplateTable::_new() {
     Register Rzero = Z_R1_scratch;
     __ clear_reg(Rzero, true /*whole reg*/, false); // Load 0L into Rzero. Don't set CC.
 
-    if (!ZeroTLAB) {
+   if (!ZeroTLAB) {
       // The object is initialized before the header. If the object size is
       // zero, go directly to the header initialization.
-      if (UseCompactObjectHeaders) {
-        assert(is_aligned(oopDesc::base_offset_in_bytes(), BytesPerLong), "oop base offset must be 8-byte-aligned");
-        __ z_aghi(Rsize, (int)-oopDesc::base_offset_in_bytes());
-      } else {
-        __ z_aghi(Rsize, (int)-sizeof(oopDesc)); // Subtract header size, set CC.
-      }
-      __ z_bre(initialize_header);             // Jump if size of fields is zero.
+      int header_size = oopDesc::header_size() * HeapWordSize;
+      assert(is_aligned(header_size, BytesPerLong), "oop header size must be 8-byte-aligned");
+      __ z_aghi(Rsize, -header_size); // Subtract header size, set CC.
+      __ z_bre(initialize_header);    // Jump if size of fields is zero.
 
       // Initialize object fields.
       // See documentation for MVCLE instruction!!!
@@ -4197,11 +4204,7 @@ void TemplateTable::_new() {
 
       // Set Rzero to 0 and use it as src length, then mvcle will copy nothing
       // and fill the object with the padding value 0.
-      if (UseCompactObjectHeaders) {
-        __ add2reg(RobjectFields, oopDesc::base_offset_in_bytes(), RallocatedObject);
-      } else {
-        __ add2reg(RobjectFields, sizeof(oopDesc), RallocatedObject);
-      }
+      __ add2reg(RobjectFields, header_size, RallocatedObject);
       __ move_long_ext(RobjectFields, as_Register(Rzero->encoding() - 1), 0);
     }
 
