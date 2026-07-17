@@ -3646,10 +3646,10 @@ void TemplateTable::fast_accessfield(TosState state) {
   // access field
   switch (bytecode()) {
     case Bytecodes::_fast_vgetfield:
-    {
-      __ unimplemented("fast_vgetfield");
-    }
-    break;
+      // field is flat; cache (Z_tmp_1) holds ResolvedFieldEntry*, obj (Z_tos) is receiver/result
+      __ read_flat_field(cache, obj);
+      __ verify_oop(Z_tos);
+      break;
     case Bytecodes::_fast_agetfield:
       do_oop_load(_masm, field, Z_tos, Z_tmp_1, Z_tmp_2, IN_HEAP);
       __ verify_oop(Z_tos);
