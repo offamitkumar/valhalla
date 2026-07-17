@@ -2094,9 +2094,7 @@ void InterpreterMacroAssembler::pop_interpreter_frame(Register return_pc, Regist
 //-------------------------------------
 
 void InterpreterMacroAssembler::read_flat_field(Register entry, Register obj) {
-  untested("read_flat_field");
   call_VM(obj, CAST_FROM_FN_PTR(address, InterpreterRuntime::read_flat_field), obj, entry);
-  z_fence();
 }
 
 void InterpreterMacroAssembler::write_flat_field(Register entry, Register field_offset,
