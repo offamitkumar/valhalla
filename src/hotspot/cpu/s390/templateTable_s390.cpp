@@ -2107,7 +2107,6 @@ void TemplateTable::if_acmp(Condition cc) {
     __ z_ltgr(Z_ARG5, Z_ARG5);
     __ z_brc(Assembler::bcondEqual, (cc == equal) ? not_taken : taken);
 
-    static_assert(markWord::inline_type_pattern <= 0x7FFF, "must fit in simm16 for z_chi");
     __ z_llill(Z_ARG3, markWord::inline_type_pattern);
     __ z_ng(Z_ARG3, Address(Z_tos, oopDesc::mark_offset_in_bytes()));
     __ z_ng(Z_ARG3, Address(Z_ARG5, oopDesc::mark_offset_in_bytes()));
@@ -2710,11 +2709,11 @@ void TemplateTable::getfield_or_static(int byte_no, bool is_static, RewriteContr
   // In the Valhalla atosHandler, flags (Z_R1_scratch) and cache (Z_tmp_1) are both
   // clobbered before we arrive there: Z_R1_scratch by br_tab dispatch and oopLoad_tmp1
   // uses in every BTB entry; Z_tmp_1 by pop_and_check_object which overwrites cache
-  // with obj.  We reload the entry pointer via load_field_entry inside atosHandler using
-  // Z_ARG4 and Z_ARG5, which are dead at the point of the z_bru(atosHandler) branch.
-  // The is_flat flag is then tested directly from memory, avoiding a register load.
+  // with obj.  We reload both via load_field_entry inside atosHandler using Z_ARG4 and
+  // Z_ARG5, which are dead at the point of the z_bru(atosHandler) branch.
   const Register atos_entry    = Z_ARG5;   // ResolvedFieldEntry* reloaded in atosHandler
-  const Register atos_index    = Z_ARG4;   // scratch for load_field_entry (discarded after)
+  const Register atos_index    = Z_ARG4;   // scratch for load_field_entry
+  const Register atos_flags    = Z_ARG4;   // reused to hold reloaded flags byte after entry load
 #ifdef ASSERT
   const Register br_tab_temp   = Z_R0_scratch;  // for branch table verification code only
 #endif
@@ -2936,12 +2935,11 @@ void TemplateTable::getfield_or_static(int byte_no, bool is_static, RewriteContr
         // time we reach here.  Reload the ResolvedFieldEntry pointer fresh.
         // atos_entry (Z_ARG5) and atos_index (Z_ARG4) are dead at this point.
         __ load_field_entry(atos_entry, atos_index);
-        // Test the is_flat bit directly from memory; atos_entry (Z_ARG5) still holds
-        // the ResolvedFieldEntry* for read_flat_field below.
+        // Read the 1-byte flags field into atos_flags (Z_ARG4); atos_entry (Z_ARG5)
+        // still holds the ResolvedFieldEntry* for read_flat_field below.
+        __ load_sized_value(atos_flags, Address(atos_entry, in_bytes(ResolvedFieldEntry::flags_offset())), sizeof(u1), false);
         Label is_flat;
-        __ testbit(Address(atos_entry, in_bytes(ResolvedFieldEntry::flags_offset())),
-                   ResolvedFieldEntry::is_flat_shift);
-        __ z_brc(Assembler::bcondAllOne, is_flat);
+        __ test_field_is_flat(atos_flags, is_flat);
         __ load_heap_oop(Z_tos, field, oopLoad_tmp1, oopLoad_tmp2);
         __ push(atos);
         if (do_rewrite) {
