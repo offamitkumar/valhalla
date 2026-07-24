@@ -91,8 +91,7 @@ instruct g1StoreLSpecialOneOopOff0(indirect mem, iRegL src, immI_0 off, iRegL tm
     // (bits 31:0) of the long register. When written to memory, these bits land at
     // byte offset 4 (the low word of the 8-byte big-endian store).
     // Adjust address to point to the narrow oop at byte offset 4.
-    __ z_lgr($tmp4$$Register, $mem$$Register);
-    __ z_aghi($tmp4$$Register, 4);
+    __ z_la($tmp4$$Register, Address($mem$$Register, 4));
     write_barrier_pre(masm, this,
                       $tmp4$$Register /* obj     */,
                       $tmp1$$Register /* pre_val */,
@@ -170,8 +169,7 @@ instruct g1StoreLSpecialTwoOops(indirect mem, iRegL src, iRegL tmp1, iRegL tmp2,
                       $tmp2$$Register /* tmp1    */,
                       RegSet::of($mem$$Register, $src$$Register) /* preserve */);
     // Adjust address to point to byte offset 4 (= IR-offset-0 oop in memory)
-    __ z_lgr($tmp4$$Register, $mem$$Register);
-    __ z_aghi($tmp4$$Register, 4);
+    __ z_la($tmp4$$Register, Address($mem$$Register, 4));
     write_barrier_pre(masm, this,
                       $tmp4$$Register /* obj (byte offset 4 = IR-offset-0 oop) */,
                       $tmp1$$Register /* pre_val */,
