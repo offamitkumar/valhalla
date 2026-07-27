@@ -4278,11 +4278,8 @@ void MacroAssembler::test_oop_prototype_bit(Register oop, Register temp_reg, int
     bind(test_mark_word);
   }
   z_tmll(temp_reg, test_bit);
-  if (jmp_set) {
-    z_brnaz(jmp_label);
-  } else {
-    z_braz(jmp_label);
-  }
+  // Use branch_optimized to handle both near and far branches automatically
+  branch_optimized(jmp_set ? Assembler::bcondNotAllZero : Assembler::bcondAllZero, jmp_label);
 }
 
 void MacroAssembler::test_flat_array_oop(Register oop, Register temp_reg, Label& is_flat_array) {
