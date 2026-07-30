@@ -341,6 +341,21 @@ void VM_Version::initialize() {
   if (UseArrayFlattening) {
     FLAG_SET_DEFAULT(UseArrayFlattening, false);
   }
+  if (UseFieldFlattening) {
+    FLAG_SET_DEFAULT(UseFieldFlattening, false);
+  }
+  if (UseNullFreeNonAtomicValueFlattening) {
+    FLAG_SET_DEFAULT(UseNullFreeNonAtomicValueFlattening, false);
+  }
+  if (UseNullableAtomicValueFlattening) {
+    FLAG_SET_DEFAULT(UseNullableAtomicValueFlattening, false);
+  }
+  if (UseNullFreeAtomicValueFlattening) {
+    FLAG_SET_DEFAULT(UseNullFreeAtomicValueFlattening, false);
+  }
+  if (UseNullableNonAtomicValueFlattening) {
+    FLAG_SET_DEFAULT(UseNullableNonAtomicValueFlattening, false);
+  }
 }
 
 
